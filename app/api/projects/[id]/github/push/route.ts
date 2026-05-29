@@ -6,7 +6,8 @@ import { encryptSecret } from "@/lib/utils/crypto";
 import { checkRateLimit } from "@/lib/utils/rate-limit";
 import { Octokit } from "@octokit/rest";
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const user = await requireAuth(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -20,7 +21,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { data: project } = await supabase
     .from("projects")
     .select()
-    .eq("id", params.id)
+    .eq("id", id)
     .eq("user_id", user.id)
     .single();
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { data: files } = await supabase
     .from("project_files")
     .select("path, content")
-    .eq("project_id", params.id)
+    .eq("project_id", id)
     .eq("is_deleted", false);
 
   if (!files?.length) return NextResponse.json({ error: "No files to push" }, { status: 400 });
@@ -132,7 +133,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     await admin.from("audit_logs").insert({
       user_id: user.id,
-      project_id: params.id,
+      project_id: id,
       actor: user.id,
       action: "github.push",
       resource: "repo",

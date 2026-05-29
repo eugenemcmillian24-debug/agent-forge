@@ -13,7 +13,8 @@ const Schema = z.object({
   freeTierFirst:  z.boolean().default(true),
 });
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const user = await requireAuth(req);
   if (!user) return new Response("Unauthorized", { status: 401 });
 
@@ -29,7 +30,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { data: project } = await supabase
     .from("projects")
     .select()
-    .eq("id", params.id)
+    .eq("id", id)
     .eq("user_id", user.id)
     .single();
   if (!project) return new Response("Not found", { status: 404 });
@@ -37,12 +38,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   return createSSEStream(async (emit) => {
     const admin = createAdminClient();
 
-    await admin.from("projects").update({ status: "generating" }).eq("id", params.id);
+    await admin.from("projects").update({ status: "generating" }).eq("id", id);
 
     const { data: run } = await admin
       .from("agent_runs")
       .insert({
-        project_id: params.id,
+        project_id: id,
         status: "running",
         trigger: "user",
         started_at: new Date().toISOString(),
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       emit({ type: "agent.started", agent: "orchestrator" });
 
       const plan = await runOrchestrator(parsed.data.prompt, {
-        projectId: params.id,
+        projectId: id,
         runId: run.id,
         userId: user.id,
         taskId: "orchestrator-0",
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         await admin.from("tasks").insert(
           plan.output.tasks.map((t) => ({
             run_id: run.id,
-            project_id: params.id,
+            project_id: id,
             title: t.title,
             description: t.description,
             assigned_agent: t.assigned_agent,
@@ -102,7 +103,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
 
       await executeDAG(plan.output, {
-        projectId: params.id,
+        projectId: id,
         runId: run.id,
         userId: user.id,
         providerConfig,
@@ -112,7 +113,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       const { count: fileCount } = await admin
         .from("project_files")
         .select("id", { count: "exact", head: true })
-        .eq("project_id", params.id)
+        .eq("project_id", id)
         .eq("is_deleted", false);
 
       await admin
@@ -122,20 +123,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       await admin
         .from("projects")
         .update({ status: "ready", updated_at: new Date().toISOString() })
-        .eq("id", params.id);
+        .eq("id", id);
 
       // Create a version snapshot with full metadata
       const { data: latestVersion } = await admin
         .from("project_versions")
         .select("version_num")
-        .eq("project_id", params.id)
+        .eq("project_id", id)
         .order("version_num", { ascending: false })
         .limit(1)
         .single();
 
       const nextNum = (latestVersion?.version_num ?? 0) + 1;
       await admin.from("project_versions").insert({
-        project_id: params.id,
+        project_id: id,
         version_num: nextNum,
         label: `v${nextNum} — ${new Date().toLocaleString()}`,
         created_by: user.id,
@@ -153,7 +154,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       emit({ type: "run.completed", runId: run.id });
     } catch (err) {
       await admin.from("agent_runs").update({ status: "failed", error: String(err) }).eq("id", run.id);
-      await admin.from("projects").update({ status: "error" }).eq("id", params.id);
+      await admin.from("projects").update({ status: "error" }).eq("id", id);
       emit({ type: "run.failed", error: String(err) });
     }
   });

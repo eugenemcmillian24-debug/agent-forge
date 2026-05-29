@@ -5,7 +5,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { encryptSecret } from "@/lib/utils/crypto";
 import { checkRateLimit } from "@/lib/utils/rate-limit";
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const user = await requireAuth(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const { data: project } = await supabase
     .from("projects")
     .select()
-    .eq("id", params.id)
+    .eq("id", id)
     .eq("user_id", user.id)
     .single();
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -38,7 +39,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   const { data: deployment } = await admin
     .from("deployments")
-    .insert({ project_id: params.id, target: "cloudflare_pages", status: "deploying" })
+    .insert({ project_id: id, target: "cloudflare_pages", status: "deploying" })
     .select()
     .single();
 
@@ -75,7 +76,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     await admin.from("audit_logs").insert({
       user_id: user.id,
-      project_id: params.id,
+      project_id: id,
       actor: user.id,
       action: "cloudflare.deploy",
       resource: "pages_project",
