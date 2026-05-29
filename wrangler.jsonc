@@ -1,0 +1,11 @@
+{
+  // AgentForge — Cloudflare Pages deployment config
+  "name": "agentforge",
+  "pages_build_output_dir": ".next",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "env": {
+    "production": { "name": "agentforge-prod" },
+    "preview":    { "name": "agentforge-preview" }
+  }
+}

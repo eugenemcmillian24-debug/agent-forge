@@ -1,0 +1,18 @@
+CREATE INDEX idx_projects_user_id ON public.projects (user_id);
+CREATE INDEX idx_projects_status ON public.projects (status);
+CREATE INDEX idx_files_project_id ON public.project_files (project_id);
+CREATE INDEX idx_files_version_id ON public.project_files (version_id);
+CREATE INDEX idx_files_path ON public.project_files (project_id, path);
+CREATE INDEX idx_conversations_project ON public.conversations (project_id);
+CREATE INDEX idx_messages_conversation ON public.messages (conversation_id);
+CREATE INDEX idx_messages_created ON public.messages (created_at DESC);
+CREATE INDEX idx_runs_project ON public.agent_runs (project_id);
+CREATE INDEX idx_runs_status ON public.agent_runs (status);
+CREATE INDEX idx_tasks_run ON public.tasks (run_id);
+CREATE INDEX idx_tasks_status ON public.tasks (status);
+CREATE INDEX idx_tasks_agent ON public.tasks (assigned_agent);
+CREATE INDEX idx_deployments_project ON public.deployments (project_id);
+CREATE INDEX idx_deployments_status ON public.deployments (status);
+CREATE INDEX idx_audit_user ON public.audit_logs (user_id);
+CREATE INDEX idx_audit_project ON public.audit_logs (project_id);
+CREATE INDEX idx_audit_created ON public.audit_logs (created_at DESC);
