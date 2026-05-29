@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "deploy": "npx wrangler pages deploy .next --project-name=agentforge",
+    "deploy:preview": "npx wrangler pages deploy .next --project-name=agentforge --branch=preview"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
