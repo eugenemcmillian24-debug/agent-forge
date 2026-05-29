@@ -2,7 +2,8 @@ import { createServerClient as createSSRClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
 /**
- * Creates a Supabase server client using Next.js 15's async cookies() API.
+ * Creates a Supabase server client using Next.js 15/16 async cookies() API.
+ * Uses getAll/setAll cookie pattern required by @supabase/ssr >=0.6.
  * Must be called inside a Server Component, Route Handler, or Server Action.
  */
 export async function createServerClient() {
@@ -13,22 +14,17 @@ export async function createServerClient() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get(name: string) {
-          return cookieStore.get(name)?.value;
+        getAll() {
+          return cookieStore.getAll();
         },
-        set(name: string, value: string, options: Record<string, unknown>) {
+        setAll(cookiesToSet) {
           try {
-            cookieStore.set(name, value, options as Parameters<typeof cookieStore.set>[2]);
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            );
           } catch {
-            // set() can throw in read-only contexts (e.g. Server Components).
-            // Safe to ignore — the session will refresh on the next request.
-          }
-        },
-        remove(name: string, options: Record<string, unknown>) {
-          try {
-            cookieStore.set(name, "", { ...options as Parameters<typeof cookieStore.set>[2], maxAge: 0 });
-          } catch {
-            // Same as above — safe to ignore.
+            // set() throws in read-only contexts (Server Components).
+            // Safe to ignore — session refreshes on the next request.
           }
         },
       },

@@ -4,16 +4,23 @@ import { createServerClient } from "@supabase/ssr";
 export async function proxy(req: NextRequest) {
   const res = NextResponse.next();
 
-  // Middleware cannot use the async cookies() from next/headers —
-  // it must use the request/response cookie API directly.
+  // proxy/middleware must use the request/response cookie API directly —
+  // it cannot use the async cookies() from next/headers.
+  // @supabase/ssr >=0.6 requires getAll/setAll instead of get/set/remove.
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        get:    (name) => req.cookies.get(name)?.value,
-        set:    (name, value, options) => res.cookies.set(name, value, options),
-        remove: (name, options) => res.cookies.set(name, "", { ...options, maxAge: 0 }),
+        getAll() {
+          return req.cookies.getAll();
+        },
+        setAll(cookiesToSet) {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            req.cookies.set(name, value);
+            res.cookies.set(name, value, options);
+          });
+        },
       },
     }
   );
