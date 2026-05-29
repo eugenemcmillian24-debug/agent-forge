@@ -10,7 +10,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const { searchParams } = new URL(req.url);
   const path = searchParams.get("path");
 
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
 
   if (path) {
     // Single file fetch
@@ -45,7 +45,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const admin = createAdminClient();
 
   // Verify project ownership
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const { data: project } = await supabase.from("projects").select("id").eq("id", params.id).eq("user_id", user.id).single();
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

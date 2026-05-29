@@ -6,7 +6,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const user = await requireAuth(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const { data: project } = await supabase.from("projects").select("id").eq("id", params.id).eq("user_id", user.id).single();
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 

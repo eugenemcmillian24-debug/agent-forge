@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
   const user = await requireAuth(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const { data: config } = await supabase.from("provider_configs").select().eq("user_id", user.id).single();
 
   // Check which provider env vars are set (server-side only)

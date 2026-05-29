@@ -20,7 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const parsed = Schema.safeParse(body);
   if (!parsed.success) return new Response("Invalid input", { status: 400 });
 
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const admin = createAdminClient();
 
   // Get or create conversation

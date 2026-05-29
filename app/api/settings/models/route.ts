@@ -6,7 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export async function GET(req: NextRequest) {
   const user = await requireAuth(req);
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const supabase = createServerClient();
+  const supabase = await createServerClient();
   const { data } = await supabase.from("model_preferences").select().eq("user_id", user.id);
   return NextResponse.json(data ?? []);
 }
