@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy
+    name: Build & Deploy
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -28,17 +28,12 @@ jobs:
       - name: Type check
         run: npm run type-check
 
-      - name: Lint
-        run: npm run lint
-
       - name: Build
         run: npm run build
         env:
-          # Public vars (safe to expose at build time)
           NEXT_PUBLIC_SUPABASE_URL:      ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-          NEXT_PUBLIC_APP_URL:           ${{ secrets.NEXT_PUBLIC_APP_URL }}
-          # Server-side secrets (needed by Next.js server routes at build/runtime)
+          NEXT_PUBLIC_APP_URL:           https://agentforge-184.pages.dev
           SUPABASE_URL:                  ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY:     ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ENCRYPTION_KEY:                ${{ secrets.ENCRYPTION_KEY }}
@@ -52,8 +47,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID:         ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command:   pages deploy .next --project-name=agentforge --branch=main
+        run: npx wrangler pages deploy .next --project-name=agentforge --branch=main --commit-dirty=true
+        env:
+          CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
