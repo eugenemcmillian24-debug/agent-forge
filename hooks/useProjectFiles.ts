@@ -2,18 +2,33 @@
 import { useState, useEffect, useCallback } from "react";
 import type { ProjectFile } from "@/types/project";
 
+async function fetchFiles(projectId: string): Promise<ProjectFile[]> {
+  const res = await fetch(`/api/projects/${projectId}/files`);
+  return res.ok ? res.json() : [];
+}
+
 export function useProjectFiles(projectId: string) {
-  const [files, setFiles]     = useState<ProjectFile[]>([]);
+  const [files,   setFiles]   = useState<ProjectFile[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/files`);
-      if (res.ok) setFiles(await res.json());
-    } finally { setLoading(false); }
+  useEffect(() => {
+    fetchFiles(projectId)
+      .then(data => {
+        setFiles(data);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
   }, [projectId]);
 
-  useEffect(() => { load(); }, [load]);
-  return { files, loading, reload: load };
+  const reload = useCallback(() => {
+    setLoading(true);
+    fetchFiles(projectId)
+      .then(data => {
+        setFiles(data);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [projectId]);
+
+  return { files, loading, reload };
 }

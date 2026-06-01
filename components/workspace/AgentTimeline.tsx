@@ -167,7 +167,7 @@ export function AgentTimeline({ projectId }: { projectId: string }) {
               )}
 
               {task.errors?.length > 0 && (
-                <p className="text-xs text-red-400/80 mt-1.5 truncate">{task.errors[0]}</p>
+                <ErrorList errors={task.errors} />
               )}
             </div>
           </div>

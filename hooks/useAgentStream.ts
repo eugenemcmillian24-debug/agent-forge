@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 
 export interface StreamEvent { type: string; [key: string]: unknown; }
 
@@ -10,6 +10,10 @@ export function useAgentStream(
   const [events, setEvents]   = useState<StreamEvent[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError]     = useState<string | null>(null);
+
+  // Stable ref so options changes don't invalidate startGeneration's useCallback
+  const optionsRef = useRef(options);
+  useEffect(() => { optionsRef.current = options; }, [options]);
 
   const startGeneration = useCallback(async (prompt: string, routingProfile = "balanced") => {
     setRunning(true); setError(null); setEvents([]);
@@ -30,7 +34,7 @@ export function useAgentStream(
               if (ev.type === "run.failed") {
               const msg = String(ev.error ?? "Generation failed");
               setError(msg);
-              options?.onError?.(msg);
+              optionsRef.current?.onError?.(msg);
             }
               setRunning(false);
             }
@@ -40,7 +44,7 @@ export function useAgentStream(
     } catch (err) {
       const msg = String(err);
       setError(msg);
-      options?.onError?.(msg);
+      optionsRef.current?.onError?.(msg);
     }
     finally { setRunning(false); }
   }, [projectId]);
