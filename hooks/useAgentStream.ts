@@ -3,7 +3,10 @@ import { useState, useCallback } from "react";
 
 export interface StreamEvent { type: string; [key: string]: unknown; }
 
-export function useAgentStream(projectId: string) {
+export function useAgentStream(
+  projectId: string,
+  options?: { onError?: (message: string) => void }
+) {
   const [events, setEvents]   = useState<StreamEvent[]>([]);
   const [running, setRunning] = useState(false);
   const [error, setError]     = useState<string | null>(null);
@@ -24,13 +27,21 @@ export function useAgentStream(projectId: string) {
             const ev = JSON.parse(line.slice(6)) as StreamEvent;
             setEvents(prev => [...prev, ev]);
             if (ev.type === "run.completed" || ev.type === "run.failed" || ev.type === "done") {
-              if (ev.type === "run.failed") setError(String(ev.error ?? "Generation failed"));
+              if (ev.type === "run.failed") {
+              const msg = String(ev.error ?? "Generation failed");
+              setError(msg);
+              options?.onError?.(msg);
+            }
               setRunning(false);
             }
           } catch { /* skip malformed */ }
         }
       }
-    } catch (err) { setError(String(err)); }
+    } catch (err) {
+      const msg = String(err);
+      setError(msg);
+      options?.onError?.(msg);
+    }
     finally { setRunning(false); }
   }, [projectId]);
 

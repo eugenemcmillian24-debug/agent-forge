@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
 import { Bot, LayoutDashboard, Settings, LogOut, Plus, Zap } from "lucide-react";
+import { ToastProvider } from "@/lib/toast";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createServerClient();
