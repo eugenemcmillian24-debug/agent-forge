@@ -261,3 +261,24 @@ CREATE INDEX idx_deployments_status ON public.deployments (status);
 CREATE INDEX idx_audit_user ON public.audit_logs (user_id);
 CREATE INDEX idx_audit_project ON public.audit_logs (project_id);
 CREATE INDEX idx_audit_created ON public.audit_logs (created_at DESC);
+
+
+-- ══════════════════════════════════════════════════════
+-- Migration 004: handle_new_user trigger (REQUIRED)
+-- Run this in the Supabase SQL Editor
+-- ══════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  INSERT INTO public.users (id, email, display_name)
+  VALUES (NEW.id, NEW.email, COALESCE(NEW.raw_user_meta_data->>'display_name', split_part(NEW.email, '@', 1)))
+  ON CONFLICT (id) DO UPDATE SET email=EXCLUDED.email, display_name=COALESCE(EXCLUDED.display_name, public.users.display_name), updated_at=NOW();
+  RETURN NEW;
+END; $$;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+INSERT INTO public.users (id, email, display_name)
+SELECT au.id, au.email, COALESCE(au.raw_user_meta_data->>'display_name', split_part(au.email, '@', 1))
+FROM auth.users au LEFT JOIN public.users pu ON pu.id = au.id WHERE pu.id IS NULL ON CONFLICT (id) DO NOTHING;
