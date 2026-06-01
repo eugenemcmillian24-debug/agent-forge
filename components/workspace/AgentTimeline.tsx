@@ -56,7 +56,7 @@ const AGENT_BADGE: Record<string, string> = {
 };
 
 export function AgentTimeline({ projectId }: { projectId: string }) {
-  const { tasks, loading } = useTaskStatus(projectId, 2000);
+  const { tasks, loading } = useTaskStatus(projectId);
 
   const running   = tasks.filter(t => t.status === "running").length;
   const completed = tasks.filter(t => t.status === "completed").length;

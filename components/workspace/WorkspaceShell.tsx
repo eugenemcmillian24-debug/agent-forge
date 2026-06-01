@@ -3,7 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import {
   Bot, MessageSquare, Code2, Eye, Rocket, History,
-  Settings, ArrowLeft, Zap, Download, GitBranch, ChevronLeft
+  Settings, Zap, Download, ChevronLeft
 } from "lucide-react";
 import { ChatPanel }      from "./ChatPanel";
 import { FileTree }       from "./FileTree";
@@ -137,7 +137,7 @@ export function WorkspaceShell({ project, initialPanel = "chat" }: { project: Pr
               </div>
             )}
             {panel === "editor"   && <CodeEditor projectId={project.id} filePath={selectedFile} />}
-            {panel === "preview"  && <PreviewPanel projectId={project.id} />}
+            {panel === "preview"  && <PreviewPanel />}
             {panel === "deploy"   && <DeployPanel projectId={project.id} />}
             {panel === "history"  && <VersionHistory projectId={project.id} />}
             {panel === "settings" && <SettingsPanel />}
@@ -148,7 +148,7 @@ export function WorkspaceShell({ project, initialPanel = "chat" }: { project: Pr
   );
 }
 
-function PreviewPanel({ projectId }: { projectId: string }) {
+function PreviewPanel() {
   return (
     <div className="flex flex-col h-full">
       <div className="p-3 border-b border-white/[0.05] flex items-center gap-2 bg-[#0b0b14]">

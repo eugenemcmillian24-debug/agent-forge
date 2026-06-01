@@ -4,8 +4,7 @@ import { MistralProvider }      from "./providers/mistral";
 import { OpenRouterProvider }   from "./providers/openrouter";
 import { HuggingFaceProvider }  from "./providers/huggingface";
 import { taskModelMatrix, type TaskType } from "./task-model-matrix";
-import type { AIProvider, GenerateTextOptions, GenerateStructuredOptions, StructuredResponse, AIResponse, HealthCheckResult } from "./types";
-import { ProviderError } from "./types";
+import type { AIProvider, StructuredResponse, AIResponse, HealthCheckResult } from "./types";
 import { z } from "zod";
 
 const PROVIDERS: Record<string, AIProvider> = {

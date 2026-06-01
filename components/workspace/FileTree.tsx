@@ -1,6 +1,6 @@
 "use client";
 import { useProjectFiles } from "@/hooks/useProjectFiles";
-import { FileCode, Folder, FolderOpen, RefreshCw, Files } from "lucide-react";
+import { FileCode, Folder, RefreshCw, Files } from "lucide-react";
 
 const LANG_COLORS: Record<string, string> = {
   typescript:  "text-blue-400",

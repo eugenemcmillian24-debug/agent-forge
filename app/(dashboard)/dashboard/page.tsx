@@ -1,7 +1,7 @@
 import { createServerClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { Plus, Zap, CheckCircle, AlertCircle, Clock, Search } from "lucide-react";
+import { Plus, Zap, CheckCircle, AlertCircle, Clock } from "lucide-react";
 import type { Project } from "@/types/project";
 
 const STATUS_CONFIG = {

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect } from "react";
-import { Settings, CheckCircle, XCircle, Loader2, RefreshCw, Zap, AlertTriangle, Wifi, WifiOff } from "lucide-react";
+import { Settings, CheckCircle, XCircle, Loader2, RefreshCw, Zap, AlertTriangle, Wifi } from "lucide-react";
 import { useProviderHealth } from "@/hooks/useProviderHealth";
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -17,14 +17,6 @@ const PROVIDER_ROLES: Record<string, string> = {
   groq:         "Fast QA and repair loops",
   mistral:      "Code generation (Codestral)",
   huggingface:  "Fallback inference",
-};
-
-const PROVIDER_COLORS: Record<string, { dot: string; badge: string }> = {
-  githubModels: { dot: "bg-white/50",    badge: "badge-white"   },
-  openrouter:   { dot: "bg-violet-400",  badge: "badge-violet"  },
-  groq:         { dot: "bg-orange-400",  badge: "badge-white"   },
-  mistral:      { dot: "bg-blue-400",    badge: "badge-blue"    },
-  huggingface:  { dot: "bg-yellow-400",  badge: "badge-white"   },
 };
 
 const MODEL_ROUTING = [
@@ -116,12 +108,11 @@ export function SettingsPanel() {
           ) : (
             <div className="space-y-2">
               {providers.map(p => {
-                const colors = PROVIDER_COLORS[p.id] ?? { dot: "bg-white/20", badge: "badge-white" };
                 return (
                   <div key={p.id}
                     className="flex items-center justify-between p-4 rounded-xl border border-white/[0.05] bg-white/[0.02] hover:border-white/[0.09] hover:bg-white/[0.03] transition-all">
                     <div className="flex items-center gap-3 min-w-0">
-                      <StatusIcon status={p.status} />
+                      <StatusIcon status={p.status ?? ""} />
                       <div className="min-w-0">
                         <p className="text-sm font-semibold leading-tight">{PROVIDER_LABELS[p.id] ?? p.id}</p>
                         <p className="text-xs text-white/30 mt-0.5 truncate">{PROVIDER_ROLES[p.id] ?? ""}</p>
@@ -135,7 +126,7 @@ export function SettingsPanel() {
                       {p.latency && (
                         <span className="text-xs text-white/25 font-mono tabular-nums">{p.latency}ms</span>
                       )}
-                      <StatusBadge status={p.status} connected={p.connected} />
+                      <StatusBadge status={p.status ?? ""} connected={p.connected} />
                     </div>
                   </div>
                 );

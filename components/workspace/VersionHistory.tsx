@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { History, RotateCcw, Tag, Clock, Sparkles } from "lucide-react";
+import { History, RotateCcw, Clock, Sparkles } from "lucide-react";
 
 interface Version { id: string; version_num: number; label?: string; created_at: string; }
 

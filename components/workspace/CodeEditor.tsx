@@ -9,7 +9,7 @@ function getLanguageLabel(path: string): string {
     css: "CSS", html: "HTML", json: "JSON", sql: "SQL", md: "Markdown",
     sh: "Shell", env: "Env", toml: "TOML", yaml: "YAML", yml: "YAML",
   };
-  return map[ext] ?? ext.toUpperCase() || "Plain text";
+  return (map[ext] ?? ext.toUpperCase()) || "Plain text";
 }
 
 function getLineCount(content: string): number {
@@ -27,13 +27,15 @@ export function CodeEditor({ projectId, filePath }: { projectId: string; filePat
 
   useEffect(() => {
     if (!filePath) return;
-    setLoading(true);
-    setError(null);
-    fetch(`/api/projects/${projectId}/files?path=${encodeURIComponent(filePath)}`)
+    let cancelled = false;
+    Promise.resolve()
+      .then(() => { if (!cancelled) { setLoading(true); setError(null); } })
+      .then(() => fetch(`/api/projects/${projectId}/files?path=${encodeURIComponent(filePath)}`))
       .then(r => r.json())
-      .then(d => { setContent(d.content ?? ""); setOriginal(d.content ?? ""); })
-      .catch(() => setError("Failed to load file"))
-      .finally(() => setLoading(false));
+      .then(d => { if (!cancelled) { setContent(d.content ?? ""); setOriginal(d.content ?? ""); } })
+      .catch(() => { if (!cancelled) setError("Failed to load file"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [projectId, filePath]);
 
   const handleSave = useCallback(async () => {
@@ -67,6 +69,7 @@ export function CodeEditor({ projectId, filePath }: { projectId: string; filePat
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handleSave]);
 
   async function handleCopy() {
@@ -103,7 +106,6 @@ export function CodeEditor({ projectId, filePath }: { projectId: string; filePat
   const isDirty    = content !== original;
   const lang       = getLanguageLabel(filePath);
   const lineCount  = getLineCount(content);
-  const filename   = filePath.split("/").pop() ?? filePath;
 
   return (
     <div className="flex flex-col h-full bg-[#0a0a0f]">
