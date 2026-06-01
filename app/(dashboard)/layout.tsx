@@ -1,40 +1,65 @@
 import { redirect } from "next/navigation";
 import { createServerClient } from "@/lib/supabase/server";
 import Link from "next/link";
-import { Bot, LayoutDashboard, Settings, LogOut } from "lucide-react";
+import { Bot, LayoutDashboard, Settings, LogOut, Plus } from "lucide-react";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createServerClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  const initials = (user.user_metadata?.display_name as string || user.email || "U")
+    .split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase();
+
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white flex">
       {/* Sidebar */}
-      <aside className="w-56 border-r border-white/5 flex flex-col">
-        <div className="h-16 flex items-center gap-2 px-5 border-b border-white/5">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center">
-            <Bot className="w-4 h-4 text-white" />
+      <aside className="w-[220px] shrink-0 border-r border-white/[0.05] flex flex-col bg-[#0c0c14]">
+        {/* Logo */}
+        <div className="h-14 flex items-center gap-2.5 px-5 border-b border-white/[0.05]">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-md shadow-violet-500/20">
+            <Bot className="w-3.5 h-3.5 text-white" />
           </div>
-          <span className="font-semibold text-sm tracking-tight">AgentForge</span>
+          <span className="font-semibold text-[14px] tracking-tight">AgentForge</span>
         </div>
-        <nav className="flex-1 p-3 space-y-1">
-          <Link href="/dashboard" className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-white/60 hover:text-white hover:bg-white/5 transition-all">
-            <LayoutDashboard className="w-4 h-4" /> Projects
+
+        {/* New project CTA */}
+        <div className="px-3 pt-4 pb-2">
+          <Link href="/new" className="flex items-center justify-center gap-2 w-full py-2 rounded-lg bg-violet-600/90 hover:bg-violet-500 transition-all text-sm font-medium shadow-sm shadow-violet-500/20 hover:shadow-violet-500/30">
+            <Plus className="w-3.5 h-3.5" />
+            New project
           </Link>
-          <Link href="/settings" className="flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-white/60 hover:text-white hover:bg-white/5 transition-all">
-            <Settings className="w-4 h-4" /> Settings
+        </div>
+
+        {/* Nav */}
+        <nav className="flex-1 p-3 space-y-0.5">
+          <Link href="/dashboard" className="nav-item">
+            <LayoutDashboard className="w-4 h-4 shrink-0" />
+            Projects
+          </Link>
+          <Link href="/settings" className="nav-item">
+            <Settings className="w-4 h-4 shrink-0" />
+            Settings
           </Link>
         </nav>
-        <div className="p-3 border-t border-white/5">
-          <div className="px-3 py-2 text-xs text-white/30 truncate">{user.email}</div>
+
+        {/* User */}
+        <div className="p-3 border-t border-white/[0.05]">
+          <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg mb-1">
+            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500/40 to-indigo-500/40 border border-violet-500/20 flex items-center justify-center text-[11px] font-bold text-violet-300 shrink-0">
+              {initials}
+            </div>
+            <span className="text-xs text-white/40 truncate flex-1">{user.email}</span>
+          </div>
           <form action="/api/auth/signout" method="POST">
-            <button type="submit" className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm text-white/40 hover:text-white hover:bg-white/5 transition-all">
-              <LogOut className="w-4 h-4" /> Sign out
+            <button type="submit" className="nav-item w-full text-left">
+              <LogOut className="w-4 h-4 shrink-0" />
+              Sign out
             </button>
           </form>
         </div>
       </aside>
+
       <main className="flex-1 overflow-auto">{children}</main>
     </div>
   );

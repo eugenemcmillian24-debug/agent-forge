@@ -1,6 +1,4 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
 
 :root {
   --background: 240 10% 3.9%;
@@ -9,4 +7,150 @@
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body { background: #0a0a0f; color: white; }
+body { background: #0a0a0f; color: white; font-family: 'Inter', sans-serif; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+/* ── Animations ── */
+@keyframes float {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50%       { transform: translateY(-20px) scale(1.02); }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-ring {
+  0%   { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(139, 92, 246, 0.4); }
+  70%  { transform: scale(1);    box-shadow: 0 0 0 8px rgba(139, 92, 246, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(139, 92, 246, 0); }
+}
+@keyframes progress-indeterminate {
+  0%   { left: -40%; width: 40%; }
+  60%  { left: 100%; width: 40%; }
+  100% { left: 100%; width: 40%; }
+}
+
+.animate-float        { animation: float 6s ease-in-out infinite; }
+.animate-shimmer      { background-size: 200% auto; animation: shimmer 3s linear infinite; }
+.animate-fade-up      { animation: fade-up 0.4s ease forwards; }
+.animate-pulse-ring   { animation: pulse-ring 2s ease infinite; }
+
+/* ── Gradient text ── */
+.gradient-text {
+  background: linear-gradient(135deg, #a78bfa 0%, #818cf8 40%, #67e8f9 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.gradient-text-shimmer {
+  background: linear-gradient(90deg, #a78bfa, #818cf8, #67e8f9, #a78bfa);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: shimmer 4s linear infinite;
+}
+
+/* ── Glass card ── */
+.glass {
+  background: rgba(255,255,255,0.03);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.glass-hover {
+  transition: background 0.2s, border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+.glass-hover:hover {
+  background: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.1);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+}
+
+/* ── Input base ── */
+.input-base {
+  width: 100%;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 10px 14px;
+  color: white;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.input-base::placeholder { color: rgba(255,255,255,0.2); }
+.input-base:focus {
+  border-color: rgba(139,92,246,0.5);
+  background: rgba(139,92,246,0.04);
+  box-shadow: 0 0 0 3px rgba(139,92,246,0.12);
+}
+
+/* ── Status dot ── */
+.status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.status-dot.generating { background: #a78bfa; animation: pulse-ring 2s ease infinite; }
+.status-dot.ready      { background: #34d399; }
+.status-dot.error      { background: #f87171; }
+.status-dot.draft      { background: rgba(255,255,255,0.2); }
+
+/* ── Progress bar ── */
+.progress-bar { position: relative; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,0.05); }
+.progress-bar-fill { height: 100%; border-radius: 99px; transition: width 0.3s ease; }
+.progress-bar-indeterminate::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(139,92,246,0.6), transparent);
+  animation: progress-indeterminate 1.5s ease infinite;
+}
+
+/* ── Sidebar nav item ── */
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-radius: 8px;
+  font-size: 13.5px; color: rgba(255,255,255,0.5);
+  transition: all 0.15s; cursor: pointer; text-decoration: none;
+}
+.nav-item:hover { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.85); }
+.nav-item.active { background: rgba(139,92,246,0.12); color: rgba(167,139,250,1); }
+.nav-item.active svg { color: rgba(167,139,250,1); }
+
+/* ── Tab nav ── */
+.tab-item {
+  display: flex; align-items: center; gap: 5px;
+  padding: 6px 10px; font-size: 12px;
+  color: rgba(255,255,255,0.4); cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+}
+.tab-item:hover { color: rgba(255,255,255,0.7); }
+.tab-item.active { color: white; border-bottom-color: #7c3aed; }
+
+/* ── Chat bubble ── */
+.bubble-user      { background: linear-gradient(135deg, #7c3aed, #6d28d9); color: white; border-radius: 16px 16px 4px 16px; }
+.bubble-assistant { background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.85); border-radius: 16px 16px 16px 4px; }
+
+/* ── Agent task card ── */
+.task-card {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.05);
+  background: rgba(255,255,255,0.02);
+  transition: all 0.2s;
+}
+.task-card.running   { border-color: rgba(139,92,246,0.25); background: rgba(139,92,246,0.05); }
+.task-card.completed { border-color: rgba(52,211,153,0.2);  background: rgba(52,211,153,0.04); }
+.task-card.failed    { border-color: rgba(248,113,113,0.2);  background: rgba(248,113,113,0.04); }
