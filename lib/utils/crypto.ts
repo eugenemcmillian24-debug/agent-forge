@@ -54,8 +54,9 @@ export async function encryptSecret(plaintext: string): Promise<string> {
 export async function decryptSecret(ciphertext: string): Promise<string> {
   const key = await importKey(getEncKey());
   const combined = base64ToUint8(ciphertext);
-  const iv = combined.subarray(0, 12);
-  const data = combined.subarray(12);
+  // Use slice() instead of subarray() — returns Uint8Array<ArrayBuffer>, satisfying BufferSource
+  const iv   = combined.slice(0, 12);
+  const data = combined.slice(12);
   const decrypted = await crypto.subtle.decrypt({ name: ALGORITHM, iv }, key, data);
   return new TextDecoder().decode(decrypted);
 }
