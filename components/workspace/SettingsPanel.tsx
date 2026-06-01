@@ -1,6 +1,9 @@
 "use client";
-import { useEffect } from "react";
-import { Settings, CheckCircle, XCircle, Loader2, RefreshCw, Zap, AlertTriangle, Wifi } from "lucide-react";
+import { useEffect, useState, useCallback } from "react";
+import {
+  Settings, CheckCircle, XCircle, Loader2, RefreshCw, Zap,
+  AlertTriangle, Wifi, Key, Eye, EyeOff, Plus, Trash2, Check,
+} from "lucide-react";
 import { useProviderHealth } from "@/hooks/useProviderHealth";
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -19,13 +22,21 @@ const PROVIDER_ROLES: Record<string, string> = {
   huggingface:  "Fallback inference",
 };
 
+const PROVIDER_KEY_HINTS: Record<string, { placeholder: string; docsUrl: string }> = {
+  githubModels: { placeholder: "ghp_...", docsUrl: "https://github.com/settings/tokens" },
+  openrouter:   { placeholder: "sk-or-...", docsUrl: "https://openrouter.ai/keys" },
+  groq:         { placeholder: "gsk_...", docsUrl: "https://console.groq.com/keys" },
+  mistral:      { placeholder: "your-mistral-key", docsUrl: "https://console.mistral.ai/api-keys" },
+  huggingface:  { placeholder: "hf_...", docsUrl: "https://huggingface.co/settings/tokens" },
+};
+
 const MODEL_ROUTING = [
-  { task: "Orchestrator",  role: "Planning & DAG",       provider: "GitHub Models", model: "gpt-4.1-mini",              color: "text-violet-400" },
-  { task: "Architecture",  role: "System design",         provider: "GitHub Models", model: "deepseek-v3",               color: "text-blue-400"   },
-  { task: "Frontend",      role: "UI code generation",    provider: "Mistral",       model: "codestral-latest",          color: "text-cyan-400"   },
-  { task: "Backend",       role: "API & server code",     provider: "Mistral",       model: "mistral-medium-latest",     color: "text-blue-400"   },
-  { task: "QA + Repair",   role: "Validation & fixes",    provider: "Groq",          model: "llama-3.3-70b-versatile",  color: "text-orange-400" },
-  { task: "Docs + Export", role: "Documentation",         provider: "GitHub Models", model: "phi-4",                     color: "text-emerald-400"},
+  { task: "Orchestrator",  role: "Planning & DAG",       provider: "GitHub Models", model: "gpt-4.1-mini",             color: "text-violet-400" },
+  { task: "Architecture",  role: "System design",         provider: "GitHub Models", model: "deepseek-v3",              color: "text-blue-400"   },
+  { task: "Frontend",      role: "UI code generation",    provider: "Mistral",       model: "codestral-latest",         color: "text-cyan-400"   },
+  { task: "Backend",       role: "API & server code",     provider: "Mistral",       model: "mistral-medium-latest",    color: "text-blue-400"   },
+  { task: "QA + Repair",   role: "Validation & fixes",    provider: "Groq",          model: "llama-3.3-70b-versatile", color: "text-orange-400" },
+  { task: "Docs + Export", role: "Documentation",         provider: "GitHub Models", model: "phi-4",                    color: "text-emerald-400"},
 ];
 
 function StatusIcon({ status }: { status: string }) {
@@ -43,6 +54,165 @@ function StatusBadge({ status, connected }: { status: string; connected: boolean
   return <span className="badge badge-white" style={{ opacity: 0.5 }}>Not set</span>;
 }
 
+interface KeyEntry { provider: string; label: string; masked: string; }
+
+function KeyManager() {
+  const [keys,     setKeys]     = useState<KeyEntry[]>([]);
+  const [loading,  setLoading]  = useState(true);
+  const [adding,   setAdding]   = useState<string | null>(null);
+  const [keyValue, setKeyValue] = useState("");
+  const [keyLabel, setKeyLabel] = useState("");
+  const [showKey,  setShowKey]  = useState(false);
+  const [saving,   setSaving]   = useState(false);
+  const [saved,    setSaved]    = useState(false);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const loadKeys = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/settings/keys");
+      if (res.ok) setKeys(await res.json());
+    } finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { loadKeys(); }, [loadKeys]);
+
+  async function handleSaveKey() {
+    if (!adding || !keyValue.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch("/api/settings/keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: adding, key: keyValue.trim(), label: keyLabel || undefined }),
+      });
+      if (res.ok) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+        setAdding(null);
+        setKeyValue("");
+        setKeyLabel("");
+        loadKeys();
+      }
+    } finally { setSaving(false); }
+  }
+
+  async function handleDelete(provider: string) {
+    if (!confirm(`Remove ${PROVIDER_LABELS[provider]} key?`)) return;
+    setDeleting(provider);
+    try {
+      await fetch("/api/settings/keys", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider }),
+      });
+      loadKeys();
+    } finally { setDeleting(null); }
+  }
+
+  const configuredProviders = new Set(keys.map(k => k.provider));
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[10px] text-white/30 font-semibold tracking-widest uppercase">Your API Keys</h3>
+        <span className="text-[10px] text-white/20">Encrypted at rest · Never logged</span>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-6 text-white/20">
+          <Loader2 className="w-4 h-4 animate-spin mx-auto" />
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {Object.keys(PROVIDER_LABELS).map(provider => {
+            const existing = keys.find(k => k.provider === provider);
+            const hint = PROVIDER_KEY_HINTS[provider];
+            const isAdding = adding === provider;
+
+            return (
+              <div key={provider} className="rounded-xl border border-white/[0.05] bg-white/[0.02] overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-3 gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <Key className={`w-3.5 h-3.5 shrink-0 ${existing ? "text-emerald-400" : "text-white/20"}`} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold leading-tight">{PROVIDER_LABELS[provider]}</p>
+                      {existing ? (
+                        <p className="text-xs text-white/30 font-mono mt-0.5">{existing.masked}</p>
+                      ) : (
+                        <p className="text-xs text-white/25 mt-0.5">Not configured</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {existing ? (
+                      <button onClick={() => handleDelete(provider)} disabled={deleting === provider}
+                        className="p-1.5 rounded-lg text-white/20 hover:text-red-400 hover:bg-red-500/10 transition-all">
+                        {deleting === provider
+                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          : <Trash2 className="w-3.5 h-3.5" />
+                        }
+                      </button>
+                    ) : (
+                      <button onClick={() => setAdding(isAdding ? null : provider)}
+                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border border-violet-500/20 transition-all">
+                        <Plus className="w-3 h-3" />
+                        Add key
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Inline key input */}
+                {isAdding && (
+                  <div className="px-4 pb-4 pt-1 border-t border-white/[0.04] space-y-2.5">
+                    <div className="relative">
+                      <input
+                        type={showKey ? "text" : "password"}
+                        value={keyValue}
+                        onChange={e => setKeyValue(e.target.value)}
+                        placeholder={hint.placeholder}
+                        autoFocus
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500/30 pr-9"
+                      />
+                      <button type="button" onClick={() => setShowKey(v => !v)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/20 hover:text-white/50">
+                        {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={keyLabel}
+                      onChange={e => setKeyLabel(e.target.value)}
+                      placeholder="Label (optional, e.g. 'Personal')"
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
+                    />
+                    <div className="flex items-center gap-2">
+                      <button onClick={handleSaveKey} disabled={!keyValue.trim() || saving}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-violet-600 hover:bg-violet-500 disabled:opacity-40 transition-all font-medium">
+                        {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : saved ? <Check className="w-3 h-3" /> : <Key className="w-3 h-3" />}
+                        {saving ? "Saving…" : saved ? "Saved!" : "Save key"}
+                      </button>
+                      <a href={hint.docsUrl} target="_blank" rel="noopener noreferrer"
+                        className="text-xs text-white/25 hover:text-white/50 transition-colors underline underline-offset-2">
+                        Get API key ↗
+                      </a>
+                      <button onClick={() => { setAdding(null); setKeyValue(""); }}
+                        className="ml-auto text-xs text-white/25 hover:text-white/50">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SettingsPanel() {
   const { providers, testing, load, runHealthChecks } = useProviderHealth();
   useEffect(() => { load(); }, [load]);
@@ -52,7 +222,6 @@ export function SettingsPanel() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
-
       {/* ── Header ── */}
       <div className="px-6 py-4 border-b border-white/[0.05] shrink-0">
         <div className="flex items-center gap-2.5 mb-1">
@@ -61,11 +230,10 @@ export function SettingsPanel() {
           </div>
           <h2 className="text-base font-semibold">Provider Settings</h2>
         </div>
-        <p className="text-xs text-white/35 ml-9">Manage AI provider connections and routing preferences</p>
+        <p className="text-xs text-white/35 ml-9">Manage AI provider connections, API keys, and routing</p>
       </div>
 
-      <div className="p-6 space-y-6">
-
+      <div className="p-6 space-y-8">
         {/* ── Summary stats ── */}
         {providers.length > 0 && (
           <div className="grid grid-cols-2 gap-3">
@@ -86,16 +254,16 @@ export function SettingsPanel() {
           </div>
         )}
 
-        {/* ── Provider status ── */}
+        {/* ── Your API Keys ── */}
+        <KeyManager />
+
+        {/* ── Provider Status ── */}
         <div>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-[10px] text-white/30 font-semibold tracking-widest uppercase">Provider Status</h3>
             <button onClick={runHealthChecks} disabled={testing}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-white/35 hover:text-white hover:bg-white/[0.05] border border-transparent hover:border-white/[0.07] transition-all disabled:opacity-40">
-              {testing
-                ? <Loader2 className="w-3 h-3 animate-spin" />
-                : <RefreshCw className="w-3 h-3" />
-              }
+              {testing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
               {testing ? "Testing…" : "Test all"}
             </button>
           </div>
@@ -107,30 +275,23 @@ export function SettingsPanel() {
             </div>
           ) : (
             <div className="space-y-2">
-              {providers.map(p => {
-                return (
-                  <div key={p.id}
-                    className="flex items-center justify-between p-4 rounded-xl border border-white/[0.05] bg-white/[0.02] hover:border-white/[0.09] hover:bg-white/[0.03] transition-all">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <StatusIcon status={p.status ?? ""} />
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold leading-tight">{PROVIDER_LABELS[p.id] ?? p.id}</p>
-                        <p className="text-xs text-white/30 mt-0.5 truncate">{PROVIDER_ROLES[p.id] ?? ""}</p>
-                        {p.lastError && (
-                          <p className="text-xs text-red-400/80 mt-1 truncate max-w-xs">{p.lastError}</p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2.5 shrink-0 ml-3">
-                      {p.latency && (
-                        <span className="text-xs text-white/25 font-mono tabular-nums">{p.latency}ms</span>
-                      )}
-                      <StatusBadge status={p.status ?? ""} connected={p.connected} />
+              {providers.map(p => (
+                <div key={p.id}
+                  className="flex items-center justify-between p-4 rounded-xl border border-white/[0.05] bg-white/[0.02] hover:border-white/[0.09] hover:bg-white/[0.03] transition-all">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <StatusIcon status={p.status ?? ""} />
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold leading-tight">{PROVIDER_LABELS[p.id] ?? p.id}</p>
+                      <p className="text-xs text-white/30 mt-0.5 truncate">{PROVIDER_ROLES[p.id] ?? ""}</p>
+                      {p.lastError && <p className="text-xs text-red-400/80 mt-1 truncate max-w-xs">{p.lastError}</p>}
                     </div>
                   </div>
-                );
-              })}
+                  <div className="flex items-center gap-2.5 shrink-0 ml-3">
+                    {p.latency && <span className="text-xs text-white/25 font-mono tabular-nums">{p.latency}ms</span>}
+                    <StatusBadge status={p.status ?? ""} connected={p.connected} />
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -158,11 +319,7 @@ export function SettingsPanel() {
               </div>
             ))}
           </div>
-          <p className="text-[11px] text-white/20 mt-2 leading-relaxed">
-            Routing adapts automatically based on provider availability. Configure keys in <code className="text-white/35 bg-white/[0.04] px-1.5 py-0.5 rounded">.env.local</code>.
-          </p>
         </div>
-
       </div>
     </div>
   );
