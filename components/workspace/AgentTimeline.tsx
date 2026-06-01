@@ -1,6 +1,40 @@
 "use client";
+import { useState } from "react";
 import { useTaskStatus } from "@/hooks/useTaskStatus";
-import { CheckCircle, XCircle, Loader2, Clock, Zap, Activity } from "lucide-react";
+import { CheckCircle, XCircle, Loader2, Clock, Zap, Activity, ChevronDown, ChevronRight } from "lucide-react";
+
+function ErrorList({ errors }: { errors: string[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasMultiple = errors.length > 1;
+
+  return (
+    <div className="mt-1.5">
+      <button
+        type="button"
+        onClick={() => setExpanded(e => !e)}
+        className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors"
+      >
+        {hasMultiple
+          ? expanded
+            ? <ChevronDown className="w-3 h-3" />
+            : <ChevronRight className="w-3 h-3" />
+          : null
+        }
+        {hasMultiple
+          ? `${errors.length} errors${expanded ? "" : ` — ${errors[0]}`}`
+          : errors[0]
+        }
+      </button>
+      {expanded && hasMultiple && (
+        <ul className="mt-1.5 space-y-1 pl-3 border-l border-red-500/20">
+          {errors.map((err, i) => (
+            <li key={i} className="text-xs text-red-400/80 leading-snug">{err}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 const AGENT_LABELS: Record<string, string> = {
   product_manager: "Product Manager", architect: "Architect", uiux: "UI/UX",
