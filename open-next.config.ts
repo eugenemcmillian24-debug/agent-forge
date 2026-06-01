@@ -5,12 +5,14 @@ const config: OpenNextConfig = {
     override: {
       wrapper: "cloudflare-node",
       converter: "edge",
-      // Use the in-memory cache — no KV binding needed for this app
+      proxyExternalRequest: "fetch",
       incrementalCache: "dummy",
       tagCache: "dummy",
       queue: "dummy",
     },
   },
+
+  edgeExternals: ["node:crypto"],
 
   middleware: {
     external: true,
@@ -18,6 +20,9 @@ const config: OpenNextConfig = {
       wrapper: "cloudflare-edge",
       converter: "edge",
       proxyExternalRequest: "fetch",
+      incrementalCache: "dummy",
+      tagCache: "dummy",
+      queue: "dummy",
     },
   },
 };
