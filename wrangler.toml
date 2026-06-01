@@ -8,3 +8,14 @@ assets = { directory = ".open-next/assets", binding = "ASSETS" }
 
 [observability]
 enabled = true
+
+# Public vars (safe to commit — no secrets here)
+# Secrets are set via: wrangler secret put <KEY>
+# Required secrets:
+#   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
+#   wrangler secret put ENCRYPTION_KEY
+#   wrangler secret put GITHUB_MODELS_TOKEN
+#   wrangler secret put GROQ_API_KEY
+#   wrangler secret put MISTRAL_API_KEY
+#   wrangler secret put OPENROUTER_API_KEY
+#   wrangler secret put HUGGINGFACE_TOKEN
