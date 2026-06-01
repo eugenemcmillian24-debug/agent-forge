@@ -1,0 +1,10 @@
+name = "agentforge"
+main = ".open-next/worker.js"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Assets served by the Worker via OpenNext's asset handler
+assets = { directory = ".open-next/assets", binding = "ASSETS" }
+
+[observability]
+enabled = true

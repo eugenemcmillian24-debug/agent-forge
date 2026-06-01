@@ -1,12 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
-export async function proxy(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
 
-  // proxy/middleware must use the request/response cookie API directly —
-  // it cannot use the async cookies() from next/headers.
-  // @supabase/ssr >=0.6 requires getAll/setAll instead of get/set/remove.
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,

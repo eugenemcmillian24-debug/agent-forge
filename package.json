@@ -8,8 +8,10 @@
     "start": "next start",
     "lint": "eslint",
     "type-check": "tsc --noEmit",
-    "deploy": "npx wrangler pages deploy .next --project-name=agentforge",
-    "deploy:preview": "npx wrangler pages deploy .next --project-name=agentforge --branch=preview"
+    "deploy:preview": "opennextjs-cloudflare build && wrangler deploy --env preview",
+    "build:cf": "opennextjs-cloudflare build",
+    "preview": "wrangler dev",
+    "deploy": "opennextjs-cloudflare build && wrangler deploy"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
@@ -36,7 +38,6 @@
     "react-hook-form": "^7.76.1",
     "react-resizable-panels": "^4.11.2",
     "tailwind-merge": "^3.6.0",
-    "ws": "^8.21.0",
     "zod": "^4.4.3",
     "zustand": "^5.0.14"
   },
@@ -48,6 +49,8 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "@opennextjs/cloudflare": "^1.19.11",
+    "wrangler": "^4.86.0"
   }
 }
