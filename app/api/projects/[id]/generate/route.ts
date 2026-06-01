@@ -40,7 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     await admin.from("projects").update({ status: "generating" }).eq("id", id);
 
-    const { data: run } = await admin
+    const { data: run, error: runError } = await admin
       .from("agent_runs")
       .insert({
         project_id: id,
@@ -50,6 +50,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       })
       .select()
       .single();
+
+    if (!run || runError) {
+      await admin.from("projects").update({ status: "error" }).eq("id", id);
+      emit({ type: "run.failed", error: runError?.message ?? "Failed to create agent run" });
+      return;
+    }
 
     emit({ type: "run.started", runId: run.id });
 

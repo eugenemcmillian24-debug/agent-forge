@@ -46,7 +46,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       project_id: id, path, content,
       updated_at: new Date().toISOString(),
       is_deleted: false,
-    }, { onConflict: "project_id,path,version_id" })
+    }, { onConflict: "project_id,path" })
     .select().single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

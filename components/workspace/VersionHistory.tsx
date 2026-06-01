@@ -25,10 +25,27 @@ export function VersionHistory({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   async function handleRestore(versionId: string) {
+    if (!confirm("Restore this version? Your current files will be replaced.")) return;
     setRestoring(versionId);
-    // restore logic would go here
-    await new Promise(r => setTimeout(r, 800));
-    setRestoring(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/versions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ versionId }),
+      });
+      if (res.ok) {
+        // Refresh the versions list to reflect the new current version
+        const r = await fetch(`/api/projects/${projectId}/versions`);
+        if (r.ok) setVersions(await r.json());
+      } else {
+        const d = await res.json().catch(() => ({}));
+        alert(d.error ?? "Restore failed");
+      }
+    } catch {
+      alert("Restore failed — check your connection");
+    } finally {
+      setRestoring(null);
+    }
   }
 
   return (

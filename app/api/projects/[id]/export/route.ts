@@ -46,7 +46,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const filename = `${project.name.toLowerCase().replace(/\s+/g, "-")}-export.zip`;
   // Convert Buffer → Uint8Array so it's valid as BodyInit across all runtimes
-  return new NextResponse(new Uint8Array(zipBuffer), {
+  return new NextResponse(zipBuffer.buffer as ArrayBuffer, {
     headers: {
       "Content-Type": "application/zip",
       "Content-Disposition": `attachment; filename="${filename}"`,

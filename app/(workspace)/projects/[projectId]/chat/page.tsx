@@ -16,6 +16,7 @@ export default async function WorkspaceChatPage({
     .from("projects")
     .select("*")
     .eq("id", projectId)
+    .eq("user_id", user!.id)
     .single();
   if (!project) redirect("/dashboard");
 

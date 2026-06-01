@@ -80,7 +80,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           const { data: blob } = await octokit.git.createBlob({
             owner: ghUser.login,
             repo: repoName,
-            content: Buffer.from(f.content!).toString("base64"),
+            content: btoa(unescape(encodeURIComponent(f.content!))),
             encoding: "base64",
           });
           return { path: f.path, mode: "100644" as const, type: "blob" as const, sha: blob.sha };
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { data: envBlob } = await octokit.git.createBlob({
       owner: ghUser.login,
       repo: repoName,
-      content: Buffer.from(envExample).toString("base64"),
+      content: btoa(envExample),
       encoding: "base64",
     });
     treeItems.push({ path: ".env.example", mode: "100644", type: "blob", sha: envBlob.sha });

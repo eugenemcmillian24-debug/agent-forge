@@ -16,6 +16,7 @@ export default async function WorkspaceEditorPage({
     .from("projects")
     .select("*")
     .eq("id", projectId)
+    .eq("user_id", user!.id)
     .single();
   if (!project) redirect("/dashboard");
 
