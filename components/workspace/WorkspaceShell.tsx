@@ -3,7 +3,7 @@ import { useState } from "react";
 import Link from "next/link";
 import {
   Bot, MessageSquare, Code2, Eye, Rocket, History,
-  Settings, ArrowLeft, Zap, Download, GitBranch
+  Settings, ArrowLeft, Zap, Download, GitBranch, ChevronLeft
 } from "lucide-react";
 import { ChatPanel }      from "./ChatPanel";
 import { FileTree }       from "./FileTree";
@@ -27,10 +27,17 @@ const NAV: { id: Panel; icon: React.ElementType; label: string }[] = [
 ];
 
 const STATUS_STYLES: Record<string, string> = {
-  ready:      "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-  generating: "bg-violet-500/10 text-violet-400 border-violet-500/20",
-  error:      "bg-red-500/10 text-red-400 border-red-500/20",
-  draft:      "bg-white/5 text-white/30 border-white/10",
+  ready:      "badge-emerald",
+  generating: "badge-violet",
+  error:      "badge-red",
+  draft:      "badge-white",
+};
+
+const STATUS_DOT: Record<string, string> = {
+  ready:      "bg-emerald-400",
+  generating: "bg-violet-400 animate-pulse",
+  error:      "bg-red-400",
+  draft:      "bg-white/20",
 };
 
 export function WorkspaceShell({ project, initialPanel = "chat" }: { project: Project; initialPanel?: Panel }) {
@@ -39,35 +46,35 @@ export function WorkspaceShell({ project, initialPanel = "chat" }: { project: Pr
   const [generating, setGenerating] = useState(false);
 
   const showFileTree = panel === "editor" || panel === "chat";
-  const statusStyle  = STATUS_STYLES[project.status] ?? STATUS_STYLES.draft;
+  const badgeClass   = STATUS_STYLES[project.status] ?? STATUS_STYLES.draft;
+  const dotClass     = STATUS_DOT[project.status]    ?? STATUS_DOT.draft;
 
   return (
     <div className="h-screen flex flex-col bg-[#0a0a0f] text-white overflow-hidden">
 
       {/* ── Top bar ── */}
-      <header className="h-11 border-b border-white/[0.05] flex items-center px-3 gap-3 shrink-0 bg-[#0c0c14]">
-        <Link href="/dashboard" className="text-white/25 hover:text-white/60 transition-colors p-1 rounded-md hover:bg-white/5">
-          <ArrowLeft className="w-3.5 h-3.5" />
+      <header className="h-12 border-b border-white/[0.05] flex items-center px-3 gap-2 shrink-0 bg-[#0b0b14]">
+
+        {/* Back */}
+        <Link href="/dashboard"
+          className="flex items-center gap-1 text-white/25 hover:text-white/60 transition-colors p-1.5 rounded-lg hover:bg-white/[0.04] shrink-0 group">
+          <ChevronLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
         </Link>
 
         {/* Project identity */}
-        <div className="flex items-center gap-2 pr-3 border-r border-white/[0.06]">
+        <div className="flex items-center gap-2 pr-3 border-r border-white/[0.06] shrink-0">
           <div className="w-5 h-5 rounded-md bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm shadow-violet-500/20">
             <Bot className="w-3 h-3 text-white" />
           </div>
-          <span className="text-sm font-medium truncate max-w-[180px]">{project.name}</span>
-          <span className={`text-[11px] px-2 py-0.5 rounded-full border flex items-center gap-1.5 ${statusStyle}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${
-              project.status === "generating" ? "bg-violet-400 animate-pulse" :
-              project.status === "ready"      ? "bg-emerald-400" :
-              project.status === "error"      ? "bg-red-400" : "bg-white/20"
-            }`} />
+          <span className="text-sm font-semibold truncate max-w-[160px]">{project.name}</span>
+          <span className={`badge ${badgeClass} flex items-center gap-1.5`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${dotClass}`} />
             {project.status}
           </span>
         </div>
 
         {/* Tab nav */}
-        <nav className="flex items-center border-b-0 flex-1">
+        <nav className="flex items-center flex-1 gap-0.5">
           {NAV.map(({ id, icon: Icon, label }) => (
             <button key={id} onClick={() => setPanel(id)}
               className={`tab-item ${panel === id ? "active" : ""}`}>
@@ -78,21 +85,21 @@ export function WorkspaceShell({ project, initialPanel = "chat" }: { project: Pr
         </nav>
 
         {/* Actions */}
-        <div className="flex items-center gap-1.5 ml-auto">
+        <div className="flex items-center gap-1.5 ml-auto shrink-0">
           {generating && (
-            <span className="text-xs text-violet-400 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-500/10 border border-violet-500/15">
-              <Zap className="w-3 h-3 animate-pulse" />
+            <span className="text-xs text-violet-300 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-500/10 border border-violet-500/15 animate-pulse-ring">
+              <Zap className="w-3 h-3" />
               Generating…
             </span>
           )}
           <button
             onClick={() => window.open(`/api/projects/${project.id}/export`, "_blank")}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-white/35 hover:text-white/70 hover:bg-white/5 transition-all">
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-white/30 hover:text-white/65 hover:bg-white/[0.04] transition-all">
             <Download className="w-3.5 h-3.5" />
             Export
           </button>
           <button onClick={() => setPanel("deploy")}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-violet-600 hover:bg-violet-500 text-white transition-all shadow-sm shadow-violet-500/20">
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-violet-600 hover:bg-violet-500 text-white transition-all shadow-sm shadow-violet-500/20 font-medium">
             <Rocket className="w-3.5 h-3.5" />
             Deploy
           </button>
@@ -101,9 +108,10 @@ export function WorkspaceShell({ project, initialPanel = "chat" }: { project: Pr
 
       {/* ── Main area ── */}
       <div className="flex-1 flex overflow-hidden">
+
         {/* File tree */}
         {showFileTree && (
-          <div className="w-52 border-r border-white/[0.05] shrink-0 overflow-hidden bg-[#0c0c14]">
+          <div className="w-52 border-r border-white/[0.05] shrink-0 overflow-hidden bg-[#0b0b14]">
             <FileTree
               projectId={project.id}
               selectedFile={selectedFile}
@@ -143,15 +151,18 @@ export function WorkspaceShell({ project, initialPanel = "chat" }: { project: Pr
 function PreviewPanel({ projectId }: { projectId: string }) {
   return (
     <div className="flex flex-col h-full">
-      <div className="p-3 border-b border-white/[0.05] flex items-center gap-2 bg-[#0c0c14]">
-        <Eye className="w-3.5 h-3.5 text-white/30" />
-        <span className="text-sm text-white/50">Preview</span>
-        <span className="text-xs text-white/20 ml-auto">Connect real Supabase to enable live preview</span>
+      <div className="p-3 border-b border-white/[0.05] flex items-center gap-2 bg-[#0b0b14]">
+        <Eye className="w-3.5 h-3.5 text-white/25" />
+        <span className="text-sm font-medium text-white/60">Preview</span>
+        <span className="ml-auto text-xs text-white/20">Connect Supabase to enable live preview</span>
       </div>
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
-          <Eye className="w-10 h-10 text-white/10 mx-auto mb-3" />
-          <p className="text-white/20 text-sm">Preview renders after generation completes</p>
+          <div className="w-14 h-14 rounded-2xl bg-white/[0.02] border border-white/[0.05] flex items-center justify-center mx-auto mb-4">
+            <Eye className="w-6 h-6 text-white/10" />
+          </div>
+          <p className="text-white/20 text-sm font-medium mb-1">Preview not available</p>
+          <p className="text-white/12 text-xs">Renders after generation completes</p>
         </div>
       </div>
     </div>
