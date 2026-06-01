@@ -1,0 +1,44 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a0f"/>
+      <stop offset="100%" style="stop-color:#0f0f1a"/>
+    </linearGradient>
+    <linearGradient id="text-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#a78bfa"/>
+      <stop offset="50%" style="stop-color:#818cf8"/>
+      <stop offset="100%" style="stop-color:#67e8f9"/>
+    </linearGradient>
+    <radialGradient id="glow1" cx="30%" cy="40%" r="50%">
+      <stop offset="0%" style="stop-color:#7c3aed;stop-opacity:0.3"/>
+      <stop offset="100%" style="stop-color:#7c3aed;stop-opacity:0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="70%" cy="60%" r="40%">
+      <stop offset="0%" style="stop-color:#4f46e5;stop-opacity:0.2"/>
+      <stop offset="100%" style="stop-color:#4f46e5;stop-opacity:0"/>
+    </radialGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#glow1)"/>
+  <rect width="1200" height="630" fill="url(#glow2)"/>
+  <!-- Border -->
+  <rect x="1" y="1" width="1198" height="628" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1" rx="0"/>
+  <!-- Logo mark -->
+  <rect x="80" y="80" width="56" height="56" rx="14" fill="url(#text-grad)" opacity="0.9"/>
+  <text x="108" y="118" font-family="system-ui,sans-serif" font-size="28" font-weight="bold" fill="white" text-anchor="middle">A</text>
+  <!-- Brand name -->
+  <text x="152" y="118" font-family="system-ui,sans-serif" font-size="28" font-weight="600" fill="rgba(255,255,255,0.9)">AgentForge</text>
+  <!-- Headline -->
+  <text x="80" y="290" font-family="system-ui,sans-serif" font-size="72" font-weight="800" fill="white" letter-spacing="-2">Build full-stack apps</text>
+  <text x="80" y="380" font-family="system-ui,sans-serif" font-size="72" font-weight="800" fill="url(#text-grad)" letter-spacing="-2">with AI agents</text>
+  <!-- Subtext -->
+  <text x="80" y="450" font-family="system-ui,sans-serif" font-size="28" fill="rgba(255,255,255,0.45)">12 specialized agents · 5 AI providers · Deploy to Cloudflare</text>
+  <!-- Pill badges -->
+  <rect x="80" y="510" width="180" height="40" rx="20" fill="rgba(139,92,246,0.15)" stroke="rgba(139,92,246,0.3)" stroke-width="1"/>
+  <text x="170" y="535" font-family="system-ui,sans-serif" font-size="16" fill="#c4b5fd" text-anchor="middle">Free tier available</text>
+  <rect x="276" y="510" width="200" height="40" rx="20" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="376" y="535" font-family="system-ui,sans-serif" font-size="16" fill="rgba(255,255,255,0.5)" text-anchor="middle">No credit card</text>
+  <rect x="492" y="510" width="240" height="40" rx="20" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
+  <text x="612" y="535" font-family="system-ui,sans-serif" font-size="16" fill="rgba(255,255,255,0.5)" text-anchor="middle">Deploy in seconds</text>
+</svg>
