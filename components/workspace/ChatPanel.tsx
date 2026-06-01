@@ -1,6 +1,7 @@
 "use client";
 import { useState, useRef, useEffect } from "react";
 import { Send, Bot, User, Sparkles } from "lucide-react";
+import { useToast } from "@/lib/toast";
 
 interface Msg {
   role: "user" | "assistant";
@@ -15,6 +16,7 @@ function timeLabel(ts: number) {
 }
 
 export function ChatPanel({ projectId }: { projectId: string }) {
+  const { toast } = useToast();
   const [messages, setMessages] = useState<Msg[]>([{
     role: "assistant",
     content: "Hi! Describe what you'd like to build or change, and I'll help you refine the app.",

@@ -2,6 +2,7 @@
 import { useState, useRef } from "react";
 import { Zap, ChevronDown, Check } from "lucide-react";
 import { useAgentStream } from "@/hooks/useAgentStream";
+import { useToast } from "@/lib/toast";
 
 const PROFILES = [
   { id: "free_tier",  label: "Free Tier",  desc: "GitHub Models first",  color: "text-emerald-400", dot: "bg-emerald-400" },
@@ -17,7 +18,10 @@ export function PromptBar({ projectId, onGenerating }: { projectId: string; onGe
   const [profile,  setProfile]  = useState("balanced");
   const [showProf, setShowProf] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const { startGeneration, running } = useAgentStream(projectId);
+  const { toast } = useToast();
+  const { startGeneration, running } = useAgentStream(projectId, {
+    onError: (msg) => toast(msg, "error"),
+  });
 
   async function handleGenerate() {
     if (!prompt.trim() || running) return;
