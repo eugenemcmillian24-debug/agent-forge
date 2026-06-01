@@ -70,6 +70,13 @@ export async function middleware(req: NextRequest) {
     publicPaths.some(p => pathname.startsWith(p)) || pathname === "/";
 
   if (!isPublic && !user) {
+    // API routes must return 401 JSON — never redirect to login page
+    if (pathname.startsWith("/api/")) {
+      return new NextResponse(
+        JSON.stringify({ error: "Unauthorized" }),
+        { status: 401, headers: { "Content-Type": "application/json" } }
+      );
+    }
     return NextResponse.redirect(new URL("/login", req.url));
   }
 
