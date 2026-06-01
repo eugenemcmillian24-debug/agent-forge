@@ -106,14 +106,14 @@ export function AgentTimeline({ projectId }: { projectId: string }) {
                   <span className="text-[11px] text-white/25 font-mono">
                     {task.provider}/{task.model}
                   </span>
-                  {task.tokens_used > 0 && (
+                  {(task.tokens_used ?? 0) > 0 && (
                     <span className="text-[11px] px-1.5 py-0.5 rounded bg-white/5 text-white/25">
-                      {task.tokens_used.toLocaleString()} tok
+                      {(task.tokens_used ?? 0).toLocaleString()} tok
                     </span>
                   )}
-                  {task.latency_ms > 0 && (
+                  {(task.latency_ms ?? 0) > 0 && (
                     <span className="text-[11px] px-1.5 py-0.5 rounded bg-white/5 text-white/25">
-                      {task.latency_ms}ms
+                      {task.latency_ms ?? 0}ms
                     </span>
                   )}
                 </div>
