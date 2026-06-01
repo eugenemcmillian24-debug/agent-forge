@@ -14,18 +14,23 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // unsafe-eval needed for Next.js dev; tighten in v2
+      // unsafe-eval needed for Next.js dev + WebContainers; tighten in v2
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self'",
-      "connect-src 'self' https://*.supabase.co https://models.inference.ai.azure.com https://models.github.ai https://api.groq.com https://api.mistral.ai https://openrouter.ai https://api-inference.huggingface.co https://api.cloudflare.com",
-      "frame-ancestors 'none'",
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://models.inference.ai.azure.com https://models.github.ai https://api.groq.com https://api.mistral.ai https://openrouter.ai https://api-inference.huggingface.co https://api.cloudflare.com",
+      // Allow iframe srcdoc previews (same-origin) and blob: URLs for WebContainers
+      "frame-src 'self' blob: data:",
+      // WebContainers run in SharedArrayBuffer workers
+      "worker-src 'self' blob:",
+      // frame-ancestors: allow self-embedding for preview iframes
+      "frame-ancestors 'self'",
     ].join("; "),
   },
 ];
 
 const nextConfig: NextConfig = {
-  // TypeScript errors are real errors — don't hide them from production builds.
   typescript: {
     ignoreBuildErrors: false,
   },

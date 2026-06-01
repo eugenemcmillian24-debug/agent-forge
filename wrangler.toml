@@ -9,13 +9,22 @@ assets = { directory = ".open-next/assets", binding = "ASSETS" }
 [observability]
 enabled = true
 
-# Public vars (safe to commit — no secrets here)
+# ── Public vars (safe to commit — no secrets here) ──────────────────────────
+# These are read by the client bundle via NEXT_PUBLIC_ prefix.
 # Secrets are set via: wrangler secret put <KEY>
-# Required secrets:
+[vars]
+NEXT_PUBLIC_APP_URL = "https://agentforge.eugenemcmillian24.workers.dev"
+
+# Required secrets (set with `wrangler secret put <KEY>`):
+#   wrangler secret put NEXT_PUBLIC_SUPABASE_URL
+#   wrangler secret put NEXT_PUBLIC_SUPABASE_ANON_KEY
 #   wrangler secret put SUPABASE_SERVICE_ROLE_KEY
 #   wrangler secret put ENCRYPTION_KEY
 #   wrangler secret put GITHUB_MODELS_TOKEN
+#   wrangler secret put GITHUB_TOKEN
 #   wrangler secret put GROQ_API_KEY
 #   wrangler secret put MISTRAL_API_KEY
 #   wrangler secret put OPENROUTER_API_KEY
 #   wrangler secret put HUGGINGFACE_TOKEN
+#   wrangler secret put CLOUDFLARE_API_TOKEN
+#   wrangler secret put CLOUDFLARE_ACCOUNT_ID
