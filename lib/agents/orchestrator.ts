@@ -27,11 +27,12 @@ Available agents: product_manager, architect, uiux, frontend, backend, database,
 
 Rules:
 - product_manager and architect ALWAYS run first (no dependencies).
-- frontend, backend, database can run in parallel after architect.
+- uiux runs after product_manager (depends on product brief).
+- frontend, backend, database, ai_integration can run in parallel after architect.
+- github_agent and cloudflare_deploy run after architect (generate config files).
+- export_agent runs after product_manager and architect.
 - qa runs after all code generation completes.
 - repair runs only if qa finds errors.
-- github_agent and cloudflare_deploy run last, after qa passes.
-- export_agent runs independently after qa passes.
 - Every task must have a UUID id field.
 - Return ONLY valid JSON matching the ExecutionPlan schema.
 `.trim();
@@ -80,6 +81,9 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * during planning, but after DB insert the tasks get new DB UUIDs.
  * We maintain a mapping from AI-plan-id → DB-id so `completed.has(dep)`
  * works correctly against the DB IDs stored in `task.dependencies`.
+ *
+ * Context passing: each agent receives outputs from completed dependency agents
+ * via ctx.inputs, enabling downstream agents to build on upstream work.
  */
 export async function executeDAG(
   plan: ExecutionPlan,
@@ -100,6 +104,9 @@ export async function executeDAG(
 
   const completed = new Set<string>();
   const failed    = new Set<string>();
+
+  // Accumulate agent outputs to pass as inputs to downstream agents
+  const agentOutputs: Record<string, unknown> = { plan };
 
   // Safety: max iterations = tasks.length * 2 to prevent infinite loops
   let iterations = 0;
@@ -130,8 +137,18 @@ export async function executeDAG(
           const result = await dispatchToAgent(task as unknown as Task, {
             ...ctx,
             taskId: task.id,
-            inputs: { plan },
+            inputs: {
+              ...agentOutputs,
+              // Provide structured context keys for each agent type
+              productBrief: agentOutputs.productBrief,
+              architecture: agentOutputs.architecture,
+              designSystem: agentOutputs.designSystem,
+            },
           });
+
+          // Store output for downstream agents
+          const agentKey = getOutputKey(task.assigned_agent);
+          if (agentKey) agentOutputs[agentKey] = result.output;
 
           await admin
             .from("tasks")
@@ -166,47 +183,51 @@ export async function executeDAG(
   }
 }
 
+function getOutputKey(agent: string): string | null {
+  const map: Record<string, string> = {
+    product_manager:   "productBrief",
+    architect:         "architecture",
+    uiux:              "designSystem",
+    frontend:          "frontendOutput",
+    backend:           "backendOutput",
+    database:          "databaseOutput",
+    ai_integration:    "aiIntegrationOutput",
+    github_agent:      "githubOutput",
+    cloudflare_deploy: "cloudflareOutput",
+    export_agent:      "exportOutput",
+    qa:                "qaReport",
+    repair:            "repairOutput",
+  };
+  return map[agent] ?? null;
+}
+
 async function dispatchToAgent(task: Task, ctx: AgentContext): Promise<AgentResult> {
   const { runProductManager } = await import("./product-manager");
   const { runArchitect }      = await import("./architect");
   const { runQA }             = await import("./qa");
   const { runRepair }         = await import("./repair");
-
-  const stub = (agentName: string) =>
-    async (c: AgentContext): Promise<AgentResult> => ({
-      success: true,
-      output: { stub: true },
-      errors: [],
-      metadata: {
-        provider: "none",
-        model: "none",
-        tokens_used: 0,
-        latency_ms: 0,
-        provenance: {
-          agent: agentName,
-          model: "none",
-          provider: "none",
-          run_id: c.runId,
-          task_id: c.taskId,
-          generated_at: new Date().toISOString(),
-          version: 1,
-        },
-      },
-    });
+  const { runUIUX }           = await import("./uiux");
+  const { runFrontend }       = await import("./frontend");
+  const { runBackend }        = await import("./backend");
+  const { runDatabase }       = await import("./database");
+  const { runAIIntegration }  = await import("./ai_integration");
+  const { runGitHubAgent }    = await import("./github_agent");
+  const { runCloudfareDeploy } = await import("./cloudflare_deploy");
+  const { runExportAgent }    = await import("./export_agent");
 
   const agentMap: Record<string, (ctx: AgentContext) => Promise<AgentResult>> = {
     product_manager:   runProductManager,
     architect:         runArchitect,
     qa:                runQA,
     repair:            runRepair,
-    uiux:              stub("uiux"),
-    frontend:          stub("frontend"),
-    backend:           stub("backend"),
-    database:          stub("database"),
-    ai_integration:    stub("ai_integration"),
-    github_agent:      stub("github_agent"),
-    cloudflare_deploy: stub("cloudflare_deploy"),
-    export_agent:      stub("export_agent"),
+    uiux:              runUIUX,
+    frontend:          runFrontend,
+    backend:           runBackend,
+    database:          runDatabase,
+    ai_integration:    runAIIntegration,
+    github_agent:      runGitHubAgent,
+    cloudflare_deploy: runCloudfareDeploy,
+    export_agent:      runExportAgent,
   };
 
   const handler = agentMap[task.assigned_agent];
