@@ -3,6 +3,15 @@ import { useState, useEffect } from "react";
 import { Rocket, GitBranch, Cloud, CheckCircle, Loader2, ExternalLink, XCircle, AlertTriangle } from "lucide-react";
 import type { Deployment } from "@/types/project";
 
+function timeAgo(date: string): string {
+  const diff = new Date().getTime() - new Date(date).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
 export function DeployPanel({ projectId }: { projectId: string }) {
   const [deployments,  setDeployments]  = useState<Deployment[]>([]);
   const [pushing,      setPushing]      = useState(false);
@@ -38,14 +47,7 @@ export function DeployPanel({ projectId }: { projectId: string }) {
     finally { setDeploying(false); }
   }
 
-  function timeAgo(date: string) {
-    const diff = Date.now() - new Date(date).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    return `${Math.floor(hrs / 24)}d ago`;
-  }
+
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
