@@ -61,7 +61,7 @@ async function writeFiles(
         is_deleted: false,
         updated_at: new Date().toISOString(),
       },
-      { onConflict: "project_id,path" }
+      { onConflict: "project_id,path", ignoreDuplicates: false }
     );
     written.push(file.path);
   }

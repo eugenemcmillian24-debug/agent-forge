@@ -84,7 +84,7 @@ ${output.seed_sql ? `\n-- Seed Data\n${output.seed_sql}` : ""}
       is_deleted: false,
       updated_at: new Date().toISOString(),
     },
-    { onConflict: "project_id,path" }
+    { onConflict: "project_id,path", ignoreDuplicates: false }
   );
   written.push("supabase/migrations/001_schema.sql");
 
@@ -108,7 +108,7 @@ ${table.columns.map(col => `  ${col.name}: ${sqlTypeToTs(col.type)};`).join("\n"
       is_deleted: false,
       updated_at: new Date().toISOString(),
     },
-    { onConflict: "project_id,path" }
+    { onConflict: "project_id,path", ignoreDuplicates: false }
   );
   written.push("types/database.ts");
 
