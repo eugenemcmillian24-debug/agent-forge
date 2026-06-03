@@ -1,27 +1,51 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
-import { rateLimit } from "@/lib/rate-limit";
 
-// 60 requests per minute per IP on API routes
-const API_LIMIT  = 60;
+// ── IP-level burst protection (edge layer) ────────────────────────────────────
+// This in-memory limiter runs at the Cloudflare Worker edge and resets on cold
+// starts — it is intentionally lightweight burst protection only, not the
+// authoritative rate limiter. Per-user rate limiting (sliding window, Supabase-
+// backed, persistent across restarts) is enforced inside each API route handler
+// via lib/utils/rate-limit.ts checkRateLimit(). Do not remove the per-route
+// checks in favour of this one.
+
+interface Window { count: number; resetAt: number; }
+const store = new Map<string, Window>();
+
+function edgeRateLimit(key: string, limit: number, windowMs: number) {
+  const now = Date.now();
+  const existing = store.get(key);
+  if (!existing || now > existing.resetAt) {
+    store.set(key, { count: 1, resetAt: now + windowMs });
+    return { success: true, remaining: limit - 1, resetAt: now + windowMs };
+  }
+  if (existing.count >= limit) {
+    return { success: false, remaining: 0, resetAt: existing.resetAt };
+  }
+  existing.count += 1;
+  return { success: true, remaining: limit - existing.count, resetAt: existing.resetAt };
+}
+
+// 120 requests per minute per IP on all API routes
+const API_LIMIT  = 120;
 const API_WINDOW = 60_000;
 
-// Stricter limit on generate endpoint (AI calls are expensive)
-const GEN_LIMIT  = 10;
+// Tighter burst cap on generate (AI calls are expensive)
+const GEN_LIMIT  = 5;
 const GEN_WINDOW = 60_000;
 
 export async function middleware(req: NextRequest) {
   const res = NextResponse.next();
   const { pathname } = req.nextUrl;
 
-  // ── Rate limiting (API routes only) ──────────────────────────────────────
+  // ── Edge burst rate limiting ──────────────────────────────────────────────
   if (pathname.startsWith("/api/")) {
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0].trim() ?? "unknown";
-    const isGenerate = pathname.includes("/generate");
+    const isGenerate = pathname.includes("/generate") || pathname.includes("/partial-regen");
 
     const result = isGenerate
-      ? rateLimit(`gen:${ip}`, { limit: GEN_LIMIT,  windowMs: GEN_WINDOW  })
-      : rateLimit(`api:${ip}`, { limit: API_LIMIT,  windowMs: API_WINDOW  });
+      ? edgeRateLimit(`gen:${ip}`, GEN_LIMIT,  GEN_WINDOW)
+      : edgeRateLimit(`api:${ip}`, API_LIMIT,  API_WINDOW);
 
     if (!result.success) {
       return new NextResponse(
@@ -65,12 +89,11 @@ export async function middleware(req: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser();
 
-  const publicPaths = ["/landing", "/login", "/signup", "/api/auth"];
+  const publicPaths = ["/landing", "/login", "/signup", "/api/auth", "/share"];
   const isPublic =
     publicPaths.some(p => pathname.startsWith(p)) || pathname === "/";
 
   if (!isPublic && !user) {
-    // API routes must return 401 JSON — never redirect to login page
     if (pathname.startsWith("/api/")) {
       return new NextResponse(
         JSON.stringify({ error: "Unauthorized" }),

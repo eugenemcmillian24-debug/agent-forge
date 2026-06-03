@@ -30,23 +30,25 @@ export function useAgentStream(
           try {
             const ev = JSON.parse(line.slice(6)) as StreamEvent;
             setEvents(prev => [...prev, ev]);
+            // Only update running state on terminal events — not on every SSE message
             if (ev.type === "run.completed" || ev.type === "run.failed" || ev.type === "done") {
               if (ev.type === "run.failed") {
-              const msg = String(ev.error ?? "Generation failed");
-              setError(msg);
-              optionsRef.current?.onError?.(msg);
-            }
+                const msg = String(ev.error ?? "Generation failed");
+                setError(msg);
+                optionsRef.current?.onError?.(msg);
+              }
               setRunning(false);
             }
-          } catch { /* skip malformed */ }
+          } catch { /* skip malformed chunks */ }
         }
       }
     } catch (err) {
       const msg = String(err);
       setError(msg);
       optionsRef.current?.onError?.(msg);
+    } finally {
+      setRunning(false);
     }
-    finally { setRunning(false); }
   }, [projectId]);
 
   return { events, running, error, startGeneration };

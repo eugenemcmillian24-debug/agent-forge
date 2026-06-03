@@ -26,13 +26,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     .single();
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+  // Only use the user's own connected GitHub token.
+  // Never fall back to server-level tokens — that would push user code
+  // to repos under the AgentForge service account.
   const { data: conn } = await supabase
     .from("github_connections")
     .select()
     .eq("user_id", user.id)
     .single();
-  const token = conn?.token_enc ?? process.env.GITHUB_TOKEN ?? process.env.SECRET_GITHUB_TOKEN;
-  if (!token) return NextResponse.json({ error: "No GitHub token configured" }, { status: 400 });
+
+  const token = conn?.token_enc;
+  if (!token) {
+    return NextResponse.json(
+      { error: "Connect your GitHub account in Settings → Integrations before pushing." },
+      { status: 400 }
+    );
+  }
 
   const { data: files } = await supabase
     .from("project_files")
@@ -117,7 +126,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       sha: commit.sha,
     });
 
-    // Encrypt token before storing
+    // Re-encrypt and store token to keep it fresh
     const encryptedToken = await encryptSecret(token);
     await admin.from("github_connections").upsert(
       {

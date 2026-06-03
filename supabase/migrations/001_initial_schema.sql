@@ -1,6 +1,17 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- ── Auto-update trigger ───────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.handle_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ── Tables ────────────────────────────────────────────────────────────────────
+
 CREATE TABLE public.users (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   email TEXT NOT NULL UNIQUE,
@@ -210,3 +221,111 @@ CREATE TABLE public.audit_logs (
   metadata JSONB NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ── Row Level Security ────────────────────────────────────────────────────────
+
+ALTER TABLE public.users               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.projects            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.project_versions    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.project_files       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.conversations       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.messages            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.agent_runs          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.tasks               ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.deployments         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.exports             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.provider_keys       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.provider_configs    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.model_preferences   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.github_connections  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.cloudflare_connections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_logs          ENABLE ROW LEVEL SECURITY;
+
+-- users: read/update own row only
+CREATE POLICY "users_read_own"   ON public.users FOR SELECT USING (auth.uid() = id);
+CREATE POLICY "users_update_own" ON public.users FOR UPDATE USING (auth.uid() = id);
+CREATE POLICY "users_insert_own" ON public.users FOR INSERT WITH CHECK (auth.uid() = id);
+
+-- projects: full CRUD scoped to owner
+CREATE POLICY "projects_read_own"   ON public.projects FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "projects_insert_own" ON public.projects FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "projects_update_own" ON public.projects FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "projects_delete_own" ON public.projects FOR DELETE USING (auth.uid() = user_id);
+
+-- project_versions: scoped via project ownership
+CREATE POLICY "project_versions_read_own" ON public.project_versions FOR SELECT
+  USING (auth.uid() = (SELECT user_id FROM public.projects WHERE id = project_id));
+CREATE POLICY "project_versions_insert_own" ON public.project_versions FOR INSERT
+  WITH CHECK (auth.uid() = (SELECT user_id FROM public.projects WHERE id = project_id));
+
+-- project_files: scoped via project ownership
+CREATE POLICY "project_files_read_own" ON public.project_files FOR SELECT
+  USING (auth.uid() = (SELECT user_id FROM public.projects WHERE id = project_id));
+CREATE POLICY "project_files_insert_own" ON public.project_files FOR INSERT
+  WITH CHECK (auth.uid() = (SELECT user_id FROM public.projects WHERE id = project_id));
+CREATE POLICY "project_files_update_own" ON public.project_files FOR UPDATE
+  USING (auth.uid() = (SELECT user_id FROM public.projects WHERE id = project_id));
+CREATE POLICY "project_files_delete_own" ON public.project_files FOR DELETE
+  USING (auth.uid() = (SELECT user_id FROM public.projects WHERE id = project_id));
+
+-- conversations: scoped to owner
+CREATE POLICY "conversations_read_own"   ON public.conversations FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "conversations_insert_own" ON public.conversations FOR INSERT WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "conversations_update_own" ON public.conversations FOR UPDATE USING (auth.uid() = user_id);
+CREATE POLICY "conversations_delete_own" ON public.conversations FOR DELETE USING (auth.uid() = user_id);
+
+-- messages: scoped via conversation ownership
+CREATE POLICY "messages_read_own" ON public.messages FOR SELECT
+  USING (auth.uid() = (SELECT user_id FROM public.conversations WHERE id = conversation_id));
+CREATE POLICY "messages_insert_own" ON public.messages FOR INSERT
+  WITH CHECK (auth.uid() = (SELECT user_id FROM public.conversations WHERE id = conversation_id));
+
+-- agent_runs: scoped via project ownership
+CREATE POLICY "agent_runs_read_own" ON public.agent_runs FOR SELECT
+  USING (auth.uid() = (SELECT user_id FROM public.projects WHERE id = project_id));
+
+-- tasks: scoped via project ownership
+CREATE POLICY "tasks_read_own" ON public.tasks FOR SELECT
+  USING (auth.uid() = (SELECT user_id FROM public.projects WHERE id = project_id));
+
+-- deployments: scoped via project ownership
+CREATE POLICY "deployments_read_own" ON public.deployments FOR SELECT
+  USING (auth.uid() = (SELECT user_id FROM public.projects WHERE id = project_id));
+CREATE POLICY "deployments_insert_own" ON public.deployments FOR INSERT
+  WITH CHECK (auth.uid() = (SELECT user_id FROM public.projects WHERE id = project_id));
+
+-- exports: scoped via project ownership
+CREATE POLICY "exports_read_own" ON public.exports FOR SELECT
+  USING (auth.uid() = (SELECT user_id FROM public.projects WHERE id = project_id));
+
+-- provider_keys / configs / preferences / connections: strict per-user
+CREATE POLICY "provider_keys_own"          ON public.provider_keys       FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "provider_configs_own"       ON public.provider_configs     FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "model_preferences_own"      ON public.model_preferences    FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "github_connections_own"     ON public.github_connections    FOR ALL USING (auth.uid() = user_id);
+CREATE POLICY "cloudflare_connections_own" ON public.cloudflare_connections FOR ALL USING (auth.uid() = user_id);
+
+-- audit_logs: users can read their own logs; insert via service role only
+CREATE POLICY "audit_logs_read_own" ON public.audit_logs FOR SELECT USING (auth.uid() = user_id);
+
+-- ── Updated_at triggers ───────────────────────────────────────────────────────
+CREATE TRIGGER users_updated_at               BEFORE UPDATE ON public.users               FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+CREATE TRIGGER projects_updated_at            BEFORE UPDATE ON public.projects            FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+CREATE TRIGGER project_files_updated_at       BEFORE UPDATE ON public.project_files       FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+CREATE TRIGGER conversations_updated_at       BEFORE UPDATE ON public.conversations       FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+CREATE TRIGGER provider_configs_updated_at    BEFORE UPDATE ON public.provider_configs    FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+CREATE TRIGGER model_preferences_updated_at   BEFORE UPDATE ON public.model_preferences   FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+CREATE TRIGGER github_connections_updated_at  BEFORE UPDATE ON public.github_connections  FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+CREATE TRIGGER cloudflare_connections_updated_at BEFORE UPDATE ON public.cloudflare_connections FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+-- ── Indexes ───────────────────────────────────────────────────────────────────
+CREATE INDEX idx_projects_user_id          ON public.projects(user_id);
+CREATE INDEX idx_project_files_project_id  ON public.project_files(project_id);
+CREATE INDEX idx_project_files_path        ON public.project_files(project_id, path) WHERE is_deleted = FALSE;
+CREATE INDEX idx_agent_runs_project_id     ON public.agent_runs(project_id);
+CREATE INDEX idx_tasks_run_id              ON public.tasks(run_id);
+CREATE INDEX idx_tasks_project_id          ON public.tasks(project_id);
+CREATE INDEX idx_audit_logs_user_id        ON public.audit_logs(user_id);
+CREATE INDEX idx_audit_logs_project_id     ON public.audit_logs(project_id);
+CREATE INDEX idx_conversations_project_id  ON public.conversations(project_id);
+CREATE INDEX idx_messages_conversation_id  ON public.messages(conversation_id);
