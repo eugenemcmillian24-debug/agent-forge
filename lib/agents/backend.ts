@@ -32,16 +32,34 @@ Generate these file types:
 - lib/services/ — business logic services
 - middleware.ts — auth guards, rate limiting
 
-Rules:
-- Use Next.js 15 App Router Route Handlers (not pages/api)
-- TypeScript with strict types
-- Zod validation on ALL API inputs
-- requireAuth() check on every protected route
-- Return NextResponse.json() consistently
-- Use Supabase admin client for server-side DB operations
+VALIDATION PATTERN — use this exactly in every route handler that accepts a body:
+  const body = await request.json().catch(() => null);
+  const parsed = MySchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { data: null, error: "Invalid input", details: parsed.error.flatten() },
+      { status: 400 }
+    );
+  }
+
+ERROR RESPONSE SHAPE — use this shape consistently across every route:
+  Success: NextResponse.json({ data: T, error: null }, { status: 200 | 201 })
+  Error:   NextResponse.json({ data: null, error: string, details?: unknown }, { status: 4xx | 5xx })
+
+AUTH GUARD PATTERN — use this on every protected route before any DB access:
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) {
+    return NextResponse.json({ data: null, error: "Unauthorized" }, { status: 401 });
+  }
+
+CODE QUALITY RULES:
+- Next.js 15 App Router Route Handlers only (NOT pages/api)
+- TypeScript with strict types — no any
+- Use Supabase admin client (createAdminClient) for server-side operations
 - Row Level Security enforced — never bypass RLS in user-facing routes
-- Rate limit expensive operations
-- Generate 6-12 files covering all API endpoints in the architecture
+- Rate limit expensive operations using lib/rate-limit
+- Every Supabase query must check .error and return it as a 500 if present
+- Generate 6–12 files covering all API endpoints in the architecture api_plan
 - Each file must be complete and compilable
 
 Return ONLY valid JSON matching the BackendOutput schema.`;
@@ -85,7 +103,6 @@ async function writeFiles(
     }
   }
 
-  // Write env vars as .env.example
   if (output.env_vars && output.env_vars.length > 0) {
     const envContent = output.env_vars
       .map(v => `${v.key}=${v.required ? "REQUIRED" : "optional"} # ${v.description}`)
@@ -118,7 +135,7 @@ export async function runBackend(ctx: AgentContext): Promise<AgentResult<Backend
   const result = await generateStructured({
     taskType:     "backendCode",
     systemPrompt: SYSTEM,
-    userMessage:  `Generate backend API code for this product.\n\nProduct Brief: ${brief.slice(0, 3000)}\n\nArchitecture: ${arch.slice(0, 2000)}`,
+    userMessage:  `Generate backend API code for this product.\n\nProduct Brief: ${brief.slice(0, 3000)}\n\nArchitecture (implement every route in api_plan): ${arch.slice(0, 3000)}`,
     schema:       BackendOutputSchema,
     ctx,
   });
