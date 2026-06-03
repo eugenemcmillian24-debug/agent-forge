@@ -2,7 +2,7 @@
 import { useEffect, useState, useCallback } from "react";
 import {
   Settings, CheckCircle, XCircle, Loader2, RefreshCw, Zap,
-  AlertTriangle, Wifi, Key, Eye, EyeOff, Plus, Trash2, Check,
+  AlertTriangle, Wifi, Key, Eye, EyeOff, Plus, Trash2, Check, Webhook,
 } from "lucide-react";
 import { useProviderHealth } from "@/hooks/useProviderHealth";
 
@@ -35,7 +35,7 @@ const MODEL_ROUTING = [
   { task: "Architecture",  role: "System design",         provider: "GitHub Models", model: "deepseek-v3",              color: "text-blue-400"   },
   { task: "Frontend",      role: "UI code generation",    provider: "Mistral",       model: "codestral-latest",         color: "text-cyan-400"   },
   { task: "Backend",       role: "API & server code",     provider: "Mistral",       model: "mistral-medium-latest",    color: "text-blue-400"   },
-  { task: "QA + Repair",   role: "Validation & fixes",    provider: "Groq",          model: "llama-3.3-70b-versatile", color: "text-orange-400" },
+  { task: "QA + Repair",   role: "Validation & fixes",    provider: "Groq",          model: "llama-3.3-70b-versatile",  color: "text-orange-400" },
   { task: "Docs + Export", role: "Documentation",         provider: "GitHub Models", model: "phi-4",                    color: "text-emerald-400"},
 ];
 
@@ -89,9 +89,7 @@ function KeyManager() {
       if (res.ok) {
         setSaved(true);
         setTimeout(() => setSaved(false), 2000);
-        setAdding(null);
-        setKeyValue("");
-        setKeyLabel("");
+        setAdding(null); setKeyValue(""); setKeyLabel("");
         loadKeys();
       }
     } finally { setSaving(false); }
@@ -110,8 +108,6 @@ function KeyManager() {
     } finally { setDeleting(null); }
   }
 
-  const configuredProviders = new Set(keys.map(k => k.provider));
-
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
@@ -120,16 +116,13 @@ function KeyManager() {
       </div>
 
       {loading ? (
-        <div className="text-center py-6 text-white/20">
-          <Loader2 className="w-4 h-4 animate-spin mx-auto" />
-        </div>
+        <div className="text-center py-6 text-white/20"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>
       ) : (
         <div className="space-y-2">
           {Object.keys(PROVIDER_LABELS).map(provider => {
             const existing = keys.find(k => k.provider === provider);
             const hint = PROVIDER_KEY_HINTS[provider];
             const isAdding = adding === provider;
-
             return (
               <div key={provider} className="rounded-xl border border-white/[0.05] bg-white/[0.02] overflow-hidden">
                 <div className="flex items-center justify-between px-4 py-3 gap-3">
@@ -137,11 +130,10 @@ function KeyManager() {
                     <Key className={`w-3.5 h-3.5 shrink-0 ${existing ? "text-emerald-400" : "text-white/20"}`} />
                     <div className="min-w-0">
                       <p className="text-sm font-semibold leading-tight">{PROVIDER_LABELS[provider]}</p>
-                      {existing ? (
-                        <p className="text-xs text-white/30 font-mono mt-0.5">{existing.masked}</p>
-                      ) : (
-                        <p className="text-xs text-white/25 mt-0.5">Not configured</p>
-                      )}
+                      {existing
+                        ? <p className="text-xs text-white/30 font-mono mt-0.5">{existing.masked}</p>
+                        : <p className="text-xs text-white/25 mt-0.5">Not configured</p>
+                      }
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -150,43 +142,31 @@ function KeyManager() {
                         className="p-1.5 rounded-lg text-white/20 hover:text-red-400 hover:bg-red-500/10 transition-all">
                         {deleting === provider
                           ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          : <Trash2 className="w-3.5 h-3.5" />
-                        }
+                          : <Trash2 className="w-3.5 h-3.5" />}
                       </button>
                     ) : (
                       <button onClick={() => setAdding(isAdding ? null : provider)}
                         className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-violet-400 hover:text-violet-300 hover:bg-violet-500/10 border border-violet-500/20 transition-all">
-                        <Plus className="w-3 h-3" />
-                        Add key
+                        <Plus className="w-3 h-3" /> Add key
                       </button>
                     )}
                   </div>
                 </div>
-
-                {/* Inline key input */}
                 {isAdding && (
                   <div className="px-4 pb-4 pt-1 border-t border-white/[0.04] space-y-2.5">
                     <div className="relative">
-                      <input
-                        type={showKey ? "text" : "password"}
-                        value={keyValue}
+                      <input type={showKey ? "text" : "password"} value={keyValue}
                         onChange={e => setKeyValue(e.target.value)}
-                        placeholder={hint.placeholder}
-                        autoFocus
-                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500/30 pr-9"
-                      />
+                        placeholder={hint.placeholder} autoFocus
+                        className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500/30 pr-9" />
                       <button type="button" onClick={() => setShowKey(v => !v)}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-white/20 hover:text-white/50">
                         {showKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                       </button>
                     </div>
-                    <input
-                      type="text"
-                      value={keyLabel}
-                      onChange={e => setKeyLabel(e.target.value)}
+                    <input type="text" value={keyLabel} onChange={e => setKeyLabel(e.target.value)}
                       placeholder="Label (optional, e.g. 'Personal')"
-                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
-                    />
+                      className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500/30" />
                     <div className="flex items-center gap-2">
                       <button onClick={handleSaveKey} disabled={!keyValue.trim() || saving}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-violet-600 hover:bg-violet-500 disabled:opacity-40 transition-all font-medium">
@@ -198,9 +178,7 @@ function KeyManager() {
                         Get API key ↗
                       </a>
                       <button onClick={() => { setAdding(null); setKeyValue(""); }}
-                        className="ml-auto text-xs text-white/25 hover:text-white/50">
-                        Cancel
-                      </button>
+                        className="ml-auto text-xs text-white/25 hover:text-white/50">Cancel</button>
                     </div>
                   </div>
                 )}
@@ -213,7 +191,126 @@ function KeyManager() {
   );
 }
 
-export function SettingsPanel() {
+// ── Webhook configuration section ─────────────────────────────────────────────
+const WEBHOOK_EVENTS = [
+  { id: "generation.completed", label: "Generation completed" },
+  { id: "generation.failed",    label: "Generation failed"    },
+  { id: "deploy.completed",     label: "Deploy completed"     },
+] as const;
+
+function WebhookManager({ projectId }: { projectId: string }) {
+  const [url,      setUrl]      = useState("");
+  const [secret,   setSecret]   = useState("");
+  const [events,   setEvents]   = useState<string[]>(["generation.completed"]);
+  const [loading,  setLoading]  = useState(true);
+  const [saving,   setSaving]   = useState(false);
+  const [saved,    setSaved]    = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [hasWebhook, setHasWebhook] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/projects/${projectId}/webhook`)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d) {
+          setUrl(d.url ?? "");
+          setEvents(d.events ?? ["generation.completed"]);
+          setHasWebhook(true);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [projectId]);
+
+  async function handleSave() {
+    if (!url.trim()) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/webhook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url.trim(), secret: secret || undefined, events }),
+      });
+      if (res.ok) {
+        setSaved(true);
+        setHasWebhook(true);
+        setTimeout(() => setSaved(false), 2000);
+      }
+    } finally { setSaving(false); }
+  }
+
+  async function handleRemove() {
+    if (!confirm("Remove webhook?")) return;
+    setRemoving(true);
+    try {
+      await fetch(`/api/projects/${projectId}/webhook`, { method: "DELETE" });
+      setUrl(""); setSecret(""); setHasWebhook(false);
+    } finally { setRemoving(false); }
+  }
+
+  function toggleEvent(id: string) {
+    setEvents(prev => prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id]);
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[10px] text-white/30 font-semibold tracking-widest uppercase">Webhook</h3>
+        {hasWebhook && <span className="badge badge-emerald">Active</span>}
+      </div>
+
+      {loading ? (
+        <div className="text-center py-4 text-white/20"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>
+      ) : (
+        <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-4 space-y-3">
+          <div className="space-y-1.5">
+            <label className="text-xs text-white/40 font-medium">Endpoint URL</label>
+            <input type="url" value={url} onChange={e => setUrl(e.target.value)}
+              placeholder="https://your-app.com/webhooks/agentforge"
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500/30" />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs text-white/40 font-medium">Signing secret <span className="text-white/20">(optional)</span></label>
+            <input type="password" value={secret} onChange={e => setSecret(e.target.value)}
+              placeholder="whsec_..."
+              className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-xs font-mono placeholder:text-white/20 focus:outline-none focus:ring-2 focus:ring-violet-500/30" />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs text-white/40 font-medium">Events</label>
+            <div className="space-y-1">
+              {WEBHOOK_EVENTS.map(ev => (
+                <label key={ev.id} className="flex items-center gap-2.5 cursor-pointer group">
+                  <input type="checkbox" checked={events.includes(ev.id)} onChange={() => toggleEvent(ev.id)}
+                    className="w-3.5 h-3.5 rounded border-white/20 bg-white/5 accent-violet-500" />
+                  <span className="text-xs text-white/50 group-hover:text-white/70 transition-colors">{ev.label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button onClick={handleSave} disabled={!url.trim() || saving || events.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-violet-600 hover:bg-violet-500 disabled:opacity-40 transition-all font-medium">
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : saved ? <Check className="w-3 h-3" /> : <Webhook className="w-3 h-3" />}
+              {saving ? "Saving…" : saved ? "Saved!" : hasWebhook ? "Update" : "Save webhook"}
+            </button>
+            {hasWebhook && (
+              <button onClick={handleRemove} disabled={removing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-red-400 hover:bg-red-500/10 border border-transparent hover:border-red-500/20 transition-all">
+                {removing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                Remove
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function SettingsPanel({ projectId }: { projectId: string }) {
   const { providers, testing, load, runHealthChecks } = useProviderHealth();
   useEffect(() => { load(); }, [load]);
 
@@ -222,7 +319,7 @@ export function SettingsPanel() {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto">
-      {/* ── Header ── */}
+      {/* Header */}
       <div className="px-6 py-4 border-b border-white/[0.05] shrink-0">
         <div className="flex items-center gap-2.5 mb-1">
           <div className="w-7 h-7 rounded-lg bg-violet-500/12 border border-violet-500/15 flex items-center justify-center">
@@ -230,11 +327,11 @@ export function SettingsPanel() {
           </div>
           <h2 className="text-base font-semibold">Provider Settings</h2>
         </div>
-        <p className="text-xs text-white/35 ml-9">Manage AI provider connections, API keys, and routing</p>
+        <p className="text-xs text-white/35 ml-9">Manage AI provider connections, API keys, routing, and webhooks</p>
       </div>
 
       <div className="p-6 space-y-8">
-        {/* ── Summary stats ── */}
+        {/* Summary stats */}
         {providers.length > 0 && (
           <div className="grid grid-cols-2 gap-3">
             <div className="p-4 rounded-xl border border-white/[0.06] bg-white/[0.02]">
@@ -254,10 +351,10 @@ export function SettingsPanel() {
           </div>
         )}
 
-        {/* ── Your API Keys ── */}
+        {/* API Keys */}
         <KeyManager />
 
-        {/* ── Provider Status ── */}
+        {/* Provider Status */}
         <div>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-[10px] text-white/30 font-semibold tracking-widest uppercase">Provider Status</h3>
@@ -267,7 +364,6 @@ export function SettingsPanel() {
               {testing ? "Testing…" : "Test all"}
             </button>
           </div>
-
           {providers.length === 0 ? (
             <div className="text-center py-10 text-white/20">
               <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2.5 text-violet-400/30" />
@@ -296,15 +392,13 @@ export function SettingsPanel() {
           )}
         </div>
 
-        {/* ── Model routing table ── */}
+        {/* Model routing */}
         <div>
           <h3 className="text-[10px] text-white/30 font-semibold tracking-widest uppercase mb-3">Default Model Routing</h3>
           <div className="rounded-xl border border-white/[0.05] overflow-hidden">
             {MODEL_ROUTING.map(({ task, role, provider, model, color }, i) => (
               <div key={task}
-                className={`flex items-center justify-between px-4 py-3 gap-3 ${
-                  i < MODEL_ROUTING.length - 1 ? "border-b border-white/[0.04]" : ""
-                } hover:bg-white/[0.02] transition-colors`}>
+                className={`flex items-center justify-between px-4 py-3 gap-3 ${i < MODEL_ROUTING.length - 1 ? "border-b border-white/[0.04]" : ""} hover:bg-white/[0.02] transition-colors`}>
                 <div className="flex items-center gap-3 min-w-0">
                   <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${color.replace("text-", "bg-")}`} />
                   <div className="min-w-0">
@@ -320,6 +414,9 @@ export function SettingsPanel() {
             ))}
           </div>
         </div>
+
+        {/* Webhook */}
+        <WebhookManager projectId={projectId} />
       </div>
     </div>
   );

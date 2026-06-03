@@ -1,11 +1,19 @@
 -- ══════════════════════════════════════════════════════════════════════
--- AgentForge — Complete Migration (run once in Supabase SQL Editor)
--- Run this if starting fresh. If already applied, run only section 004.
+-- AgentForge — Complete Migration (idempotent, run once in SQL Editor)
 -- ══════════════════════════════════════════════════════════════════════
 
 -- ── Extensions ────────────────────────────────────────────────────────
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- ── Auto-update trigger function ──────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.handle_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
 -- ── 001: Core Tables ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.users (
@@ -220,8 +228,8 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ── 002: Rate limit events (Cloudflare Workers compatible) ────────────
-CREATE TABLE IF NOT EXISTS rate_limit_events (
+-- ── 002: Rate limit events ────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.rate_limit_events (
   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id    TEXT NOT NULL,
   action     TEXT NOT NULL,
@@ -229,11 +237,11 @@ CREATE TABLE IF NOT EXISTS rate_limit_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_rate_limit_lookup
-  ON rate_limit_events (user_id, action, created_at DESC);
+  ON public.rate_limit_events (user_id, action, created_at DESC);
 
-ALTER TABLE rate_limit_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rate_limit_events ENABLE ROW LEVEL SECURITY;
 
--- ── 002: RLS Policies ─────────────────────────────────────────────────
+-- ── 002: RLS — enable on all tables ──────────────────────────────────
 ALTER TABLE public.users               ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.projects            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.project_versions    ENABLE ROW LEVEL SECURITY;
@@ -251,6 +259,7 @@ ALTER TABLE public.github_connections  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cloudflare_connections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs          ENABLE ROW LEVEL SECURITY;
 
+-- ── 002: RLS — policies (idempotent via DO block) ─────────────────────
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='users' AND policyname='users_own') THEN
     CREATE POLICY "users_own" ON public.users FOR ALL USING (auth.uid() = id);
@@ -259,28 +268,35 @@ DO $$ BEGIN
     CREATE POLICY "projects_owner" ON public.projects FOR ALL USING (auth.uid() = user_id);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='project_versions' AND policyname='versions_owner') THEN
-    CREATE POLICY "versions_owner" ON public.project_versions FOR ALL USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
+    CREATE POLICY "versions_owner" ON public.project_versions FOR ALL
+      USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='project_files' AND policyname='files_owner') THEN
-    CREATE POLICY "files_owner" ON public.project_files FOR ALL USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
+    CREATE POLICY "files_owner" ON public.project_files FOR ALL
+      USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='conversations' AND policyname='conversations_owner') THEN
     CREATE POLICY "conversations_owner" ON public.conversations FOR ALL USING (auth.uid() = user_id);
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='messages' AND policyname='messages_owner') THEN
-    CREATE POLICY "messages_owner" ON public.messages FOR ALL USING (EXISTS (SELECT 1 FROM public.conversations c WHERE c.id = conversation_id AND c.user_id = auth.uid()));
+    CREATE POLICY "messages_owner" ON public.messages FOR ALL
+      USING (EXISTS (SELECT 1 FROM public.conversations c WHERE c.id = conversation_id AND c.user_id = auth.uid()));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='agent_runs' AND policyname='runs_owner') THEN
-    CREATE POLICY "runs_owner" ON public.agent_runs FOR ALL USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
+    CREATE POLICY "runs_owner" ON public.agent_runs FOR ALL
+      USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='tasks' AND policyname='tasks_owner') THEN
-    CREATE POLICY "tasks_owner" ON public.tasks FOR ALL USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
+    CREATE POLICY "tasks_owner" ON public.tasks FOR ALL
+      USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='deployments' AND policyname='deployments_owner') THEN
-    CREATE POLICY "deployments_owner" ON public.deployments FOR ALL USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
+    CREATE POLICY "deployments_owner" ON public.deployments FOR ALL
+      USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='exports' AND policyname='exports_owner') THEN
-    CREATE POLICY "exports_owner" ON public.exports FOR ALL USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
+    CREATE POLICY "exports_owner" ON public.exports FOR ALL
+      USING (EXISTS (SELECT 1 FROM public.projects p WHERE p.id = project_id AND p.user_id = auth.uid()));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='provider_keys' AND policyname='provider_keys_owner') THEN
     CREATE POLICY "provider_keys_owner" ON public.provider_keys FOR ALL USING (auth.uid() = user_id);
@@ -303,35 +319,54 @@ DO $$ BEGIN
 END $$;
 
 -- ── 003: Indexes ──────────────────────────────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_projects_user_id      ON public.projects (user_id);
+CREATE INDEX IF NOT EXISTS idx_projects_user_id       ON public.projects (user_id);
 CREATE INDEX IF NOT EXISTS idx_projects_status        ON public.projects (status);
 CREATE INDEX IF NOT EXISTS idx_files_project_id       ON public.project_files (project_id);
 CREATE INDEX IF NOT EXISTS idx_files_version_id       ON public.project_files (version_id);
-CREATE INDEX IF NOT EXISTS idx_files_path             ON public.project_files (project_id, path);
+CREATE INDEX IF NOT EXISTS idx_files_path             ON public.project_files (project_id, path) WHERE is_deleted = FALSE;
 CREATE INDEX IF NOT EXISTS idx_conversations_project  ON public.conversations (project_id);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation  ON public.messages (conversation_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created       ON public.messages (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_project           ON public.agent_runs (project_id);
 CREATE INDEX IF NOT EXISTS idx_runs_status            ON public.agent_runs (status);
 CREATE INDEX IF NOT EXISTS idx_tasks_run              ON public.tasks (run_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_project          ON public.tasks (project_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status           ON public.tasks (status);
-CREATE INDEX IF NOT EXISTS idx_tasks_agent            ON public.tasks (assigned_agent);
 CREATE INDEX IF NOT EXISTS idx_deployments_project    ON public.deployments (project_id);
-CREATE INDEX IF NOT EXISTS idx_deployments_status     ON public.deployments (status);
 CREATE INDEX IF NOT EXISTS idx_audit_user             ON public.audit_logs (user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_project          ON public.audit_logs (project_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created          ON public.audit_logs (created_at DESC);
 
--- ── 004: handle_new_user trigger (CRITICAL — fixes projects_user_id_fkey) ──
--- Auto-creates a public.users row whenever a new auth user signs up.
--- Without this, any project INSERT fails with FK violation.
+-- ── 003: Updated_at triggers ──────────────────────────────────────────
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'users_updated_at') THEN
+    CREATE TRIGGER users_updated_at BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'projects_updated_at') THEN
+    CREATE TRIGGER projects_updated_at BEFORE UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'project_files_updated_at') THEN
+    CREATE TRIGGER project_files_updated_at BEFORE UPDATE ON public.project_files FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'conversations_updated_at') THEN
+    CREATE TRIGGER conversations_updated_at BEFORE UPDATE ON public.conversations FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'provider_configs_updated_at') THEN
+    CREATE TRIGGER provider_configs_updated_at BEFORE UPDATE ON public.provider_configs FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'github_connections_updated_at') THEN
+    CREATE TRIGGER github_connections_updated_at BEFORE UPDATE ON public.github_connections FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'cloudflare_connections_updated_at') THEN
+    CREATE TRIGGER cloudflare_connections_updated_at BEFORE UPDATE ON public.cloudflare_connections FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+  END IF;
+END $$;
 
+-- ── 004: handle_new_user trigger (CRITICAL — fixes projects FK) ───────
+-- Auto-creates public.users row on auth signup. Without this, any
+-- project INSERT fails with foreign key violation.
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
+RETURNS TRIGGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
 BEGIN
   INSERT INTO public.users (id, email, display_name, avatar_url)
   VALUES (
@@ -348,7 +383,7 @@ BEGIN
   ON CONFLICT (id) DO UPDATE SET
     email        = EXCLUDED.email,
     display_name = COALESCE(EXCLUDED.display_name, public.users.display_name),
-    avatar_url   = COALESCE(EXCLUDED.avatar_url, public.users.avatar_url),
+    avatar_url   = COALESCE(EXCLUDED.avatar_url,   public.users.avatar_url),
     updated_at   = NOW();
   RETURN NEW;
 END;
@@ -359,7 +394,7 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- Backfill: sync any existing auth users who don't have a public.users row
+-- Backfill existing auth users who have no public.users row
 INSERT INTO public.users (id, email, display_name, avatar_url)
 SELECT
   au.id,
@@ -367,7 +402,6 @@ SELECT
   COALESCE(
     au.raw_user_meta_data->>'full_name',
     au.raw_user_meta_data->>'display_name',
-    au.raw_user_meta_data->>'name',
     split_part(au.email, '@', 1)
   ),
   au.raw_user_meta_data->>'avatar_url'

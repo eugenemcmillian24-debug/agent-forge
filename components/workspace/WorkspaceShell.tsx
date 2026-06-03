@@ -43,13 +43,14 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 export function WorkspaceShell({ project: initialProject, initialPanel = "chat" }: { project: Project; initialPanel?: Panel }) {
-  const [panel, setPanel]           = useState<Panel>(initialPanel);
-  const [selectedFile, setFile]     = useState<string | null>(null);
-  const [repairing, setRepairing]   = useState(false);
+  const [panel, setPanel]             = useState<Panel>(initialPanel);
+  const [selectedFile, setFile]       = useState<string | null>(null);
+  const [repairing, setRepairing]     = useState(false);
   const [repairError, setRepairError] = useState<string | null>(null);
 
-  const { project, setProject, isGenerating, setIsGenerating, bumpFilesVersion, setCurrentRunId } = useWorkspace();
-  const { reload: reloadFiles } = useProjectFiles(project.id);
+  const { project, setProject, isGenerating, setIsGenerating, filesVersion, bumpFilesVersion, setCurrentRunId } = useWorkspace();
+  // Pass filesVersion so the hook only re-fetches when generation completes
+  const { reload: reloadFiles } = useProjectFiles(project.id, filesVersion);
 
   const showFileTree = panel === "editor" || panel === "chat";
   const badgeClass   = STATUS_STYLES[project.status] ?? STATUS_STYLES.draft;
@@ -59,16 +60,15 @@ export function WorkspaceShell({ project: initialProject, initialPanel = "chat" 
   const handleGenerating = useCallback((generating: boolean) => {
     setIsGenerating(generating);
     if (!generating) {
-      // Reload files after generation completes
+      // Bump version counter — useProjectFiles will re-fetch once
       bumpFilesVersion();
-      reloadFiles();
-      // Refresh project status
+      // Refresh project status from server
       fetch(`/api/projects/${project.id}`)
         .then(r => r.json())
         .then(data => { if (data?.status) setProject({ ...project, ...data }); })
         .catch(() => {});
     }
-  }, [project, setIsGenerating, bumpFilesVersion, reloadFiles, setProject]);
+  }, [project, setIsGenerating, bumpFilesVersion, setProject]);
 
   // Repair handler for error-status projects
   const handleRepair = useCallback(async () => {
@@ -82,28 +82,24 @@ export function WorkspaceShell({ project: initialProject, initialPanel = "chat" 
         throw new Error(d.error ?? "Repair failed");
       }
       bumpFilesVersion();
-      reloadFiles();
       setProject({ ...project, status: "ready" });
     } catch (err) {
       setRepairError(String(err));
     } finally {
       setRepairing(false);
     }
-  }, [project, repairing, bumpFilesVersion, reloadFiles, setProject]);
+  }, [project, repairing, bumpFilesVersion, setProject]);
 
   return (
     <div className="h-screen flex flex-col bg-[#0a0a0f] text-white overflow-hidden">
 
-      {/* ── Top bar ── */}
+      {/* Top bar */}
       <header className="h-12 border-b border-white/[0.05] flex items-center px-3 gap-2 shrink-0 bg-[#0b0b14]">
-
-        {/* Back */}
         <Link href="/dashboard"
           className="flex items-center gap-1 text-white/25 hover:text-white/60 transition-colors p-1.5 rounded-lg hover:bg-white/[0.04] shrink-0 group">
           <ChevronLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
         </Link>
 
-        {/* Project identity */}
         <div className="flex items-center gap-2 pr-3 border-r border-white/[0.06] shrink-0">
           <div className="w-5 h-5 rounded-md bg-gradient-to-br from-violet-500 to-indigo-600 flex items-center justify-center shadow-sm shadow-violet-500/20">
             <Bot className="w-3 h-3 text-white" />
@@ -115,7 +111,6 @@ export function WorkspaceShell({ project: initialProject, initialPanel = "chat" 
           </span>
         </div>
 
-        {/* Tab nav */}
         <nav className="flex items-center flex-1 gap-0.5">
           {NAV.map(({ id, icon: Icon, label }) => (
             <button key={id} onClick={() => setPanel(id)}
@@ -126,7 +121,6 @@ export function WorkspaceShell({ project: initialProject, initialPanel = "chat" 
           ))}
         </nav>
 
-        {/* Actions */}
         <div className="flex items-center gap-1.5 ml-auto shrink-0">
           {isGenerating && (
             <span className="text-xs text-violet-300 flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-violet-500/10 border border-violet-500/15 animate-pulse-ring">
@@ -135,24 +129,18 @@ export function WorkspaceShell({ project: initialProject, initialPanel = "chat" 
             </span>
           )}
 
-          {/* Repair button — only shown when project is in error state */}
           {project.status === "error" && (
-            <button
-              onClick={handleRepair}
-              disabled={repairing}
+            <button onClick={handleRepair} disabled={repairing}
               title="Run repair agent to fix generation errors"
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs bg-red-500/10 hover:bg-red-500/18 border border-red-500/20 hover:border-red-500/30 text-red-300 font-medium disabled:opacity-50 transition-all">
-              {repairing ? (
-                <span className="w-3 h-3 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
-              ) : (
-                <Wrench className="w-3.5 h-3.5" />
-              )}
+              {repairing
+                ? <span className="w-3 h-3 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" />
+                : <Wrench className="w-3.5 h-3.5" />}
               {repairing ? "Repairing…" : "Repair"}
             </button>
           )}
 
-          <button
-            onClick={() => window.open(`/api/projects/${project.id}/export`, "_blank")}
+          <button onClick={() => window.open(`/api/projects/${project.id}/export`, "_blank")}
             className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-white/30 hover:text-white/65 hover:bg-white/[0.04] transition-all">
             <Download className="w-3.5 h-3.5" />
             Export
@@ -165,7 +153,6 @@ export function WorkspaceShell({ project: initialProject, initialPanel = "chat" 
         </div>
       </header>
 
-      {/* Repair error banner */}
       {repairError && (
         <div className="flex items-center gap-2 px-4 py-2 bg-red-500/[0.07] border-b border-red-500/15 text-xs text-red-400 shrink-0">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
@@ -174,10 +161,8 @@ export function WorkspaceShell({ project: initialProject, initialPanel = "chat" 
         </div>
       )}
 
-      {/* ── Main area ── */}
+      {/* Main area */}
       <div className="flex-1 flex overflow-hidden">
-
-        {/* File tree */}
         {showFileTree && (
           <div className="w-52 border-r border-white/[0.05] shrink-0 overflow-hidden bg-[#0b0b14]">
             <FileTree
@@ -188,7 +173,6 @@ export function WorkspaceShell({ project: initialProject, initialPanel = "chat" 
           </div>
         )}
 
-        {/* Center panel */}
         <div className="flex-1 overflow-hidden flex flex-col">
           {panel === "chat" && (
             <PromptBar projectId={project.id} onGenerating={handleGenerating} />
@@ -205,10 +189,11 @@ export function WorkspaceShell({ project: initialProject, initialPanel = "chat" 
               </div>
             )}
             {panel === "editor"   && <CodeEditor projectId={project.id} filePath={selectedFile} />}
-            {panel === "preview"  && <PreviewPanel />}
+            {panel === "preview"  && <PreviewPlaceholder />}
             {panel === "deploy"   && <DeployPanel projectId={project.id} />}
             {panel === "history"  && <VersionHistory projectId={project.id} />}
-            {panel === "settings" && <SettingsPanel />}
+            {/* Pass projectId so SettingsPanel can load/save webhook config */}
+            {panel === "settings" && <SettingsPanel projectId={project.id} />}
           </div>
         </div>
       </div>
@@ -216,13 +201,12 @@ export function WorkspaceShell({ project: initialProject, initialPanel = "chat" 
   );
 }
 
-function PreviewPanel() {
+function PreviewPlaceholder() {
   return (
     <div className="flex flex-col h-full">
       <div className="p-3 border-b border-white/[0.05] flex items-center gap-2 bg-[#0b0b14]">
         <Eye className="w-3.5 h-3.5 text-white/25" />
         <span className="text-sm font-medium text-white/60">Preview</span>
-        <span className="ml-auto text-xs text-white/20">Connect Supabase to enable live preview</span>
       </div>
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
