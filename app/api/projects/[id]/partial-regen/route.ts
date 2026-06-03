@@ -1,123 +1,115 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/utils/auth";
-import { createServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createSSEStream } from "@/lib/streaming/sse";
-import { runOrchestrator, executeDAG } from "@/lib/agents/orchestrator";
-import { checkRateLimit } from "@/lib/utils/rate-limit";
+import { rateLimit } from "@/lib/rate-limit";
+import { generateText } from "@/lib/ai/provider-router";
+import type { AgentContext } from "@/types/agent";
 
-const Schema = z.object({
-  prompt:         z.string().min(5).max(2000),
-  targetFiles:    z.array(z.string()).optional(),
-  targetAgents:   z.array(z.string()).optional(),
-  routingProfile: z.enum(["free_tier", "balanced", "fast_build", "quality"]).default("balanced"),
+const PartialRegenSchema = z.object({
+  filePath:    z.string().min(1),
+  instruction: z.string().min(5).max(2000),
 });
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const user = await requireAuth(req);
-  if (!user) return new Response("Unauthorized", { status: 401 });
+  if (!user) return NextResponse.json({ data: null, error: "Unauthorized" }, { status: 401 });
 
-  const allowed = await checkRateLimit(user.id, "generate", 10, "1h");
-  if (!allowed) return new Response("Rate limit exceeded", { status: 429 });
+  const { id: projectId } = await params;
 
-  const body   = await req.json().catch(() => ({}));
-  const parsed = Schema.safeParse(body);
-  if (!parsed.success) return new Response("Invalid input", { status: 400 });
+  const rl = rateLimit(`partial:${user.id}`, { limit: 20, windowMs: 10 * 60 * 1000 });
+  if (!rl.success) return NextResponse.json({ data: null, error: "Rate limit exceeded" }, { status: 429 });
 
-  const supabase = await createServerClient();
-  const { data: project } = await supabase.from("projects").select().eq("id", id).eq("user_id", user.id).single();
-  if (!project) return new Response("Not found", { status: 404 });
+  const body = await req.json().catch(() => null);
+  const parsed = PartialRegenSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ data: null, error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const admin = createAdminClient();
+
+  const { data: project } = await admin
+    .from("projects").select("id").eq("id", projectId).eq("user_id", user.id).single();
+  if (!project) return NextResponse.json({ data: null, error: "Project not found" }, { status: 404 });
+
+  // Load the target file
+  const cleanPath = parsed.data.filePath.startsWith("/") ? parsed.data.filePath.slice(1) : parsed.data.filePath;
+  const { data: file } = await admin
+    .from("project_files").select("path, content, language")
+    .eq("project_id", projectId).eq("path", cleanPath).eq("is_deleted", false).single();
+
+  if (!file) return NextResponse.json({ data: null, error: "File not found" }, { status: 404 });
+
+  const { data: providerConfig } = await admin
+    .from("provider_configs").select("*").eq("user_id", user.id).single();
+
+  const resolvedConfig = {
+    routingProfile: (providerConfig?.routing_profile ?? "balanced") as "free_tier" | "balanced" | "fast_build" | "quality",
+    freeTierFirst: providerConfig?.free_tier_first ?? true,
+    fastRepair: false, qualityMode: false,
+  };
 
   return createSSEStream(async (emit) => {
-    const admin = createAdminClient();
-    await admin.from("projects").update({ status: "generating" }).eq("id", id);
+    emit({ type: "partial-regen.started", filePath: cleanPath });
 
     const { data: run } = await admin.from("agent_runs").insert({
-      project_id: id,
-      status: "running",
-      trigger: "partial_regen",
-      started_at: new Date().toISOString(),
-      metadata: {
-        targetFiles:  parsed.data.targetFiles  ?? [],
-        targetAgents: parsed.data.targetAgents ?? [],
-        prompt:       parsed.data.prompt,
-      },
+      project_id: projectId, status: "running", trigger: "partial_regen",
+      started_at: new Date().toISOString(), metadata: { filePath: cleanPath, instruction: parsed.data.instruction },
     }).select().single();
 
-    if (!run) {
-      await admin.from("projects").update({ status: "error" }).eq("id", id);
-      emit({ type: "run.failed", error: "Failed to create agent run" });
-      return;
-    }
-
-    emit({ type: "run.started", runId: run.id, trigger: "partial_regen" });
-
-    const providerConfig = {
-      routingProfile: parsed.data.routingProfile,
-      freeTierFirst: true,
-      fastRepair: false,
-      qualityMode: false,
-    };
+    const runId = (run?.id ?? "partial") as string;
 
     try {
-      // Build a focused prompt: regenerate only the described change
-      const focusedPrompt = parsed.data.targetFiles?.length
-        ? `Partial regen — only update these files: ${parsed.data.targetFiles.join(", ")}.\n\nChange: ${parsed.data.prompt}`
-        : parsed.data.prompt;
+      const routerCtx = {
+        projectId, runId, userId: user.id, taskId: runId,
+        providerConfig: resolvedConfig,
+      };
 
-      emit({ type: "agent.started", agent: "orchestrator" });
-      const plan = await runOrchestrator(focusedPrompt, {
-        projectId: id, runId: run.id, userId: user.id,
-        taskId: "orchestrator-0",
-        inputs: { userPrompt: focusedPrompt, isPartialRegen: true, targetFiles: parsed.data.targetFiles },
-        providerConfig,
-      });
-      emit({ type: "agent.completed", agent: "orchestrator", taskCount: plan.output.tasks.length });
+      // Determine task type based on file extension
+      const ext = cleanPath.split(".").pop()?.toLowerCase() ?? "";
+      const taskType = ["ts", "tsx", "js", "jsx"].includes(ext) ? "frontendCode" as const : "backendCode" as const;
 
-      if (plan.output.tasks.length > 0) {
-        await admin.from("tasks").insert(
-          plan.output.tasks.map(t => ({
-            run_id: run.id, project_id: id,
-            title: t.title, description: t.description,
-            assigned_agent: t.assigned_agent,
-            status: "pending", priority: t.priority,
-            dependencies: [], input_refs: t.input_refs,
-            output_refs: t.output_refs, errors: t.errors,
-            retry_count: 0, max_retries: t.max_retries,
-          }))
-        );
-      }
-
-      for (const task of plan.output.tasks) {
-        emit({ type: "task.queued", agent: task.assigned_agent, title: task.title });
-      }
-
-      await executeDAG(plan.output, { projectId: id, runId: run.id, userId: user.id, providerConfig });
-
-      const { count: fileCount } = await admin.from("project_files")
-        .select("id", { count: "exact", head: true })
-        .eq("project_id", id).eq("is_deleted", false);
-
-      await admin.from("agent_runs").update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", run.id);
-      await admin.from("projects").update({ status: "ready", updated_at: new Date().toISOString() }).eq("id", id);
-
-      const { data: latestVersion } = await admin.from("project_versions")
-        .select("version_num").eq("project_id", id).order("version_num", { ascending: false }).limit(1).single();
-      const nextNum = (latestVersion?.version_num ?? 0) + 1;
-      await admin.from("project_versions").insert({
-        project_id: id, version_num: nextNum,
-        label: `v${nextNum} — partial regen`,
-        created_by: user.id,
-        snapshot: { fileCount: fileCount ?? 0, runId: run.id, trigger: "partial_regen", generatedAt: new Date().toISOString() },
+      const result = await generateText({
+        taskType,
+        systemPrompt: `You are a code editor. The user wants to modify a specific file. Return ONLY the complete updated file content with no explanation, no markdown fences, no commentary. The file must be complete and compilable.`,
+        userMessage: `File: ${cleanPath}\n\nCurrent content:\n${(file.content as string).slice(0, 8000)}\n\nInstruction: ${parsed.data.instruction}\n\nReturn the complete updated file:`,
+        ctx: routerCtx,
+        temperature: 0.2,
+        maxTokens: 4000,
       });
 
-      emit({ type: "run.completed", runId: run.id });
+      // Strip any accidental markdown fences
+      const cleanContent = result.content
+        .replace(/^```[\w]*\n?/, "")
+        .replace(/\n?```$/, "")
+        .trim();
+
+      // Persist updated file
+      await admin.from("project_files").upsert({
+        project_id: projectId, path: cleanPath,
+        content: cleanContent, language: file.language,
+        agent_id: "partial_regen",
+        provenance: { agent: "partial_regen", run_id: runId, instruction: parsed.data.instruction, generated_at: new Date().toISOString() },
+        is_deleted: false, updated_at: new Date().toISOString(),
+      }, { onConflict: "project_id,path", ignoreDuplicates: false });
+
+      if (run) {
+        await admin.from("agent_runs")
+          .update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", runId);
+      }
+
+      emit({ type: "partial-regen.completed", filePath: cleanPath, provider: result.provider, model: result.model });
+
     } catch (err) {
-      await admin.from("agent_runs").update({ status: "failed", error: String(err) }).eq("id", run.id);
-      await admin.from("projects").update({ status: "error" }).eq("id", id);
-      emit({ type: "run.failed", error: String(err) });
+      if (run) {
+        await admin.from("agent_runs")
+          .update({ status: "failed", error: String(err), completed_at: new Date().toISOString() }).eq("id", runId);
+      }
+      emit({ type: "partial-regen.failed", error: String(err) });
     }
   });
 }

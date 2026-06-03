@@ -1,83 +1,134 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { requireAuth } from "@/lib/utils/auth";
-import { createServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+const FileUpdateSchema = z.object({
+  path:    z.string().min(1),
+  content: z.string(),
+  language: z.string().optional(),
+});
+
+async function assertProjectOwner(req: NextRequest, projectId: string) {
   const user = await requireAuth(req);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const { searchParams } = new URL(req.url);
-  const path      = searchParams.get("path");
-  const versionId = searchParams.get("versionId");
-
-  const supabase = await createServerClient();
-
-  // Ownership check
-  const { data: project } = await supabase
-    .from("projects").select("id").eq("id", id).eq("user_id", user.id).single();
-  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  // Single file by path (active version only)
-  if (path) {
-    const { data } = await supabase
-      .from("project_files")
-      .select("path, content, language, agent_id")
-      .eq("project_id", id).eq("path", path).eq("is_deleted", false).single();
-    if (!data) return NextResponse.json({ error: "File not found" }, { status: 404 });
-    return NextResponse.json(data);
-  }
-
-  // Files for a specific version snapshot — used by VersionHistory diff modal
-  if (versionId) {
-    const { data, error } = await supabase
-      .from("project_files")
-      .select("path, content, language, agent_id")
-      .eq("project_id", id).eq("version_id", versionId).eq("is_deleted", false).order("path");
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    return NextResponse.json(data ?? []);
-  }
-
-  // Active files: version_id IS NULL = current working set
-  const { data, error } = await supabase
-    .from("project_files")
-    .select("id, path, language, agent_id, updated_at")
-    .eq("project_id", id).is("version_id", null).eq("is_deleted", false).order("path");
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data ?? []);
+  if (!user) return { user: null, error: "Unauthorized", status: 401 as const };
+  const admin = createAdminClient();
+  const { data } = await admin
+    .from("projects").select("id").eq("id", projectId).eq("user_id", user.id).single();
+  if (!data) return { user: null, error: "Project not found", status: 404 as const };
+  return { user, error: null, status: 200 as const };
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const user = await requireAuth(req);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+/** GET /api/projects/[id]/files — list all non-deleted files */
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: projectId } = await params;
+  const { user, error, status } = await assertProjectOwner(req, projectId);
+  if (error) return NextResponse.json({ data: null, error }, { status });
 
-  const { path, content } = await req.json();
-  if (!path) return NextResponse.json({ error: "path required" }, { status: 400 });
-
-  const supabase = await createServerClient();
-  const { data: project } = await supabase
-    .from("projects").select("id").eq("id", id).eq("user_id", user.id).single();
-  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const { searchParams } = new URL(req.url);
+  const filePath = searchParams.get("path");
 
   const admin = createAdminClient();
-  const { data, error } = await admin
+
+  if (filePath) {
+    // Single file with content
+    const { data: file, error: fileError } = await admin
+      .from("project_files")
+      .select("id, path, content, language, agent_id, provenance, updated_at")
+      .eq("project_id", projectId)
+      .eq("path", filePath)
+      .eq("is_deleted", false)
+      .single();
+
+    if (fileError || !file) {
+      return NextResponse.json({ data: null, error: "File not found" }, { status: 404 });
+    }
+    return NextResponse.json({ data: file, error: null });
+  }
+
+  // File tree — paths only (no content to keep response small)
+  const { data: files, error: listError } = await admin
     .from("project_files")
-    .upsert(
-      { project_id: id, path, content, updated_at: new Date().toISOString(), is_deleted: false },
-      { onConflict: "project_id,path" }
-    )
-    .select().single();
+    .select("id, path, language, agent_id, updated_at")
+    .eq("project_id", projectId)
+    .eq("is_deleted", false)
+    .order("path");
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (listError) return NextResponse.json({ data: null, error: listError.message }, { status: 500 });
+  return NextResponse.json({ data: files, error: null });
+}
 
-  await admin.from("audit_logs").insert({
-    user_id: user.id, project_id: id, actor: user.id, action: "file.edited",
-    resource: "project_file", resource_id: path,
-    metadata: { path, size: content?.length ?? 0 },
-  });
+/** PUT /api/projects/[id]/files — create or update a file */
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: projectId } = await params;
+  const { user, error, status } = await assertProjectOwner(req, projectId);
+  if (error) return NextResponse.json({ data: null, error }, { status });
 
-  return NextResponse.json(data);
+  const body = await req.json().catch(() => null);
+  const parsed = FileUpdateSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ data: null, error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const admin = createAdminClient();
+  const cleanPath = parsed.data.path.startsWith("/") ? parsed.data.path.slice(1) : parsed.data.path;
+
+  const { data: file, error: upsertError } = await admin
+    .from("project_files")
+    .upsert({
+      project_id: projectId,
+      path:       cleanPath,
+      content:    parsed.data.content,
+      language:   parsed.data.language ?? inferLanguage(cleanPath),
+      agent_id:   "user",
+      provenance: { agent: "user", edited_by: user!.id, edited_at: new Date().toISOString() },
+      is_deleted: false,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "project_id,path", ignoreDuplicates: false })
+    .select()
+    .single();
+
+  if (upsertError) return NextResponse.json({ data: null, error: upsertError.message }, { status: 500 });
+  return NextResponse.json({ data: file, error: null });
+}
+
+/** DELETE /api/projects/[id]/files?path=... — soft-delete a file */
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: projectId } = await params;
+  const { user, error, status } = await assertProjectOwner(req, projectId);
+  if (error) return NextResponse.json({ data: null, error }, { status });
+
+  const { searchParams } = new URL(req.url);
+  const filePath = searchParams.get("path");
+  if (!filePath) return NextResponse.json({ data: null, error: "path query param required" }, { status: 400 });
+
+  const admin = createAdminClient();
+  const { error: deleteError } = await admin
+    .from("project_files")
+    .update({ is_deleted: true, updated_at: new Date().toISOString() })
+    .eq("project_id", projectId)
+    .eq("path", filePath);
+
+  if (deleteError) return NextResponse.json({ data: null, error: deleteError.message }, { status: 500 });
+  return NextResponse.json({ data: { deleted: true, path: filePath }, error: null });
+}
+
+function inferLanguage(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  const map: Record<string, string> = {
+    ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx",
+    css: "css", json: "json", md: "markdown", sql: "sql",
+    yaml: "yaml", yml: "yaml", toml: "toml", sh: "shell",
+    env: "env", html: "html",
+  };
+  return map[ext] ?? "text";
 }

@@ -86,9 +86,11 @@ export async function runAIIntegration(ctx: AgentContext): Promise<AgentResult<A
   const arch  = JSON.stringify(ctx.inputs.architecture ?? {});
 
   const result = await generateStructured({
-    // Fixed: was incorrectly set to "backendCode" — use "frontendCode" to route
-    // through Codestral which produces significantly better TypeScript/code output
-    taskType:     "frontendCode",
+    // Fixed: use "aiIntegration" task type so the task-model-matrix routes
+    // correctly to codestral-latest (primary) with proper fallbacks.
+    // Previously this was incorrectly set to "frontendCode", which bypassed
+    // the aiIntegration matrix entry and ignored model overrides for this task.
+    taskType:     "aiIntegration",
     systemPrompt: SYSTEM,
     userMessage:  `Generate AI integration code for this product.\n\nProduct Brief: ${brief.slice(0, 2000)}\n\nArchitecture: ${arch.slice(0, 1500)}`,
     schema:       AIIntegrationOutputSchema,

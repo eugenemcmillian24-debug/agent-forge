@@ -1,63 +1,83 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { requireAuth } from "@/lib/utils/auth";
-import { createServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+async function assertOwner(req: NextRequest, projectId: string) {
   const user = await requireAuth(req);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const supabase = await createServerClient();
-  const { data: project } = await supabase.from("projects").select("id").eq("id", id).eq("user_id", user.id).single();
-  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  const { data, error } = await supabase.from("project_versions")
-    .select("id, version_num, label, created_at")
-    .eq("project_id", id)
-    .order("version_num", { ascending: false });
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data ?? []);
+  if (!user) return { user: null, error: "Unauthorized", status: 401 as const };
+  const admin = createAdminClient();
+  const { data } = await admin.from("projects").select("id").eq("id", projectId).eq("user_id", user.id).single();
+  if (!data) return { user: null, error: "Project not found", status: 404 as const };
+  return { user, error: null, status: 200 as const };
 }
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const user = await requireAuth(req);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+/** GET /api/projects/[id]/versions — list all versions */
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: projectId } = await params;
+  const { user, error, status } = await assertOwner(req, projectId);
+  if (error) return NextResponse.json({ data: null, error }, { status });
 
-  const { versionId } = await req.json().catch(() => ({}));
-  if (!versionId) return NextResponse.json({ error: "versionId required" }, { status: 400 });
-
-  const supabase = await createServerClient();
   const admin = createAdminClient();
+  const { data: versions, error: listError } = await admin
+    .from("project_versions")
+    .select("id, version_num, label, snapshot, created_at")
+    .eq("project_id", projectId)
+    .order("version_num", { ascending: false });
 
-  // Verify the version belongs to this project and user
-  const { data: project } = await supabase.from("projects").select("id").eq("id", id).eq("user_id", user.id).single();
-  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (listError) return NextResponse.json({ data: null, error: listError.message }, { status: 500 });
+  return NextResponse.json({ data: versions, error: null });
+}
 
-  const { data: version } = await supabase.from("project_versions").select("id, version_num").eq("id", versionId).eq("project_id", id).single();
-  if (!version) return NextResponse.json({ error: "Version not found" }, { status: 404 });
+/** POST /api/projects/[id]/versions — restore to a specific version */
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id: projectId } = await params;
+  const { user, error, status } = await assertOwner(req, projectId);
+  if (error) return NextResponse.json({ data: null, error }, { status });
 
-  // Restore: copy files from the target version snapshot to active (version_id = null)
-  const { data: versionFiles } = await supabase.from("project_files").select("path, content, language, agent_id").eq("project_id", id).eq("version_id", versionId).eq("is_deleted", false);
-
-  if (versionFiles && versionFiles.length > 0) {
-    // Soft-delete current active files
-    await admin.from("project_files").update({ is_deleted: true, updated_at: new Date().toISOString() }).eq("project_id", id).is("version_id", null);
-
-    // Re-insert as active files
-    await admin.from("project_files").insert(
-      versionFiles.map(f => ({ project_id: id, path: f.path, content: f.content, language: f.language, agent_id: f.agent_id, is_deleted: false, updated_at: new Date().toISOString() }))
-    );
+  const body = await req.json().catch(() => null);
+  const parsed = z.object({ versionId: z.string().uuid() }).safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ data: null, error: "versionId required" }, { status: 400 });
   }
 
-  // Create a new version snapshot marking this restore
-  const { data: latestVersion } = await admin.from("project_versions").select("version_num").eq("project_id", id).order("version_num", { ascending: false }).limit(1).single();
-  const nextNum = (latestVersion?.version_num ?? 0) + 1;
-  await admin.from("project_versions").insert({ project_id: id, version_num: nextNum, label: `v${nextNum} — restored from v${version.version_num}`, created_by: user.id, snapshot: { restoredFrom: versionId, restoredAt: new Date().toISOString() } });
+  const admin = createAdminClient();
 
-  await admin.from("audit_logs").insert({ user_id: user.id, project_id: id, actor: user.id, action: "version.restore", resource: "project_version", resource_id: versionId, metadata: { restoredVersion: version.version_num } });
+  // Verify version belongs to this project
+  const { data: version } = await admin
+    .from("project_versions")
+    .select("id, version_num, snapshot")
+    .eq("id", parsed.data.versionId)
+    .eq("project_id", projectId)
+    .single();
 
-  return NextResponse.json({ success: true });
+  if (!version) return NextResponse.json({ data: null, error: "Version not found" }, { status: 404 });
+
+  // Soft-delete all files not belonging to this version
+  await admin
+    .from("project_files")
+    .update({ is_deleted: true, updated_at: new Date().toISOString() })
+    .eq("project_id", projectId)
+    .neq("version_id", parsed.data.versionId);
+
+  // Restore files for this version
+  await admin
+    .from("project_files")
+    .update({ is_deleted: false, updated_at: new Date().toISOString() })
+    .eq("project_id", projectId)
+    .eq("version_id", parsed.data.versionId);
+
+  // Update project current_version_id
+  await admin
+    .from("projects")
+    .update({ current_version_id: parsed.data.versionId, status: "ready", updated_at: new Date().toISOString() })
+    .eq("id", projectId);
+
+  return NextResponse.json({ data: { restored: true, versionId: parsed.data.versionId, versionNum: version.version_num }, error: null });
 }

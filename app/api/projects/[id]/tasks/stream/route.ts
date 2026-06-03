@@ -1,66 +1,72 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { requireAuth } from "@/lib/utils/auth";
-import { createServerClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createSSEStream } from "@/lib/streaming/sse";
-
-const TASK_FIELDS =
-  "id, title, description, assigned_agent, status, priority, provider, model, tokens_used, latency_ms, errors, created_at, started_at, completed_at";
 
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id: projectId } = await params;
   const user = await requireAuth(req);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!user) {
+    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401 });
+  }
 
-  const supabase = await createServerClient();
+  const { id: projectId } = await params;
+  const admin = createAdminClient();
 
-  // Verify ownership
-  const { data: project } = await supabase
-    .from("projects")
-    .select("id")
-    .eq("id", projectId)
-    .eq("user_id", user.id)
-    .single();
-  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const { data: project } = await admin
+    .from("projects").select("id").eq("id", projectId).eq("user_id", user.id).single();
+  if (!project) {
+    return new Response(JSON.stringify({ error: "Project not found" }), { status: 404 });
+  }
 
   return createSSEStream(async (emit) => {
-    // 1. Send initial snapshot immediately
-    const { data: initialTasks } = await supabase
+    // Send initial snapshot of all tasks for this project
+    const { data: tasks } = await admin
       .from("tasks")
-      .select(TASK_FIELDS)
+      .select("id, title, description, assigned_agent, status, priority, provider, model, tokens_used, latency_ms, errors, started_at, completed_at, created_at")
       .eq("project_id", projectId)
-      .order("created_at", { ascending: true });
+      .order("priority", { ascending: false });
 
-    emit({ type: "snapshot", tasks: initialTasks ?? [] });
+    emit({ type: "snapshot", tasks: tasks ?? [] });
 
-    // 2. Subscribe to realtime changes
+    // Poll for changes every 2 seconds while the client is connected
+    // (Supabase Realtime requires a separate WS connection; polling keeps this
+    //  route self-contained and compatible with Cloudflare Workers)
+    let lastSnapshot = JSON.stringify(tasks ?? []);
+    let pollCount = 0;
+    const MAX_POLLS = 300; // 10 minutes max stream duration
+
     await new Promise<void>((resolve) => {
-      const channel = supabase
-        .channel(`tasks-stream:${projectId}`)
-        .on(
-          "postgres_changes",
-          {
-            event: "*",
-            schema: "public",
-            table: "tasks",
-            filter: `project_id=eq.${projectId}`,
-          },
-          (payload) => {
-            emit({
-              type: `task.${payload.eventType.toLowerCase()}`,
-              task: payload.new ?? payload.old,
-            });
-          }
-        )
-        .subscribe();
+      const interval = setInterval(async () => {
+        pollCount++;
+        if (pollCount >= MAX_POLLS) { clearInterval(interval); resolve(); return; }
 
-      // Clean up when the client disconnects
-      req.signal.addEventListener("abort", () => {
-        supabase.removeChannel(channel);
-        resolve();
-      });
+        const { data: current } = await admin
+          .from("tasks")
+          .select("id, title, description, assigned_agent, status, priority, provider, model, tokens_used, latency_ms, errors, started_at, completed_at, created_at")
+          .eq("project_id", projectId)
+          .order("priority", { ascending: false });
+
+        const currentStr = JSON.stringify(current ?? []);
+        if (currentStr === lastSnapshot) return;
+
+        const prev: Record<string, unknown>[] = JSON.parse(lastSnapshot);
+        const next: Record<string, unknown>[] = current ?? [];
+
+        // Diff: emit individual task.update events
+        for (const task of next) {
+          const prevTask = prev.find((t) => t.id === task.id);
+          if (!prevTask) {
+            emit({ type: "task.insert", task });
+          } else if (JSON.stringify(prevTask) !== JSON.stringify(task)) {
+            emit({ type: "task.update", task });
+          }
+        }
+
+        lastSnapshot = currentStr;
+      }, 2000);
     });
   });
 }

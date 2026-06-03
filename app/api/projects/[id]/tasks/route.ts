@@ -1,21 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/utils/auth";
-import { createServerClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const user = await requireAuth(req);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!user) return NextResponse.json({ data: null, error: "Unauthorized" }, { status: 401 });
 
-  const supabase = await createServerClient();
-  const { data: project } = await supabase.from("projects").select("id").eq("id", id).eq("user_id", user.id).single();
-  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  const { id: projectId } = await params;
+  const admin = createAdminClient();
 
-  const { data, error } = await supabase.from("tasks")
-    .select("id, title, description, assigned_agent, status, priority, provider, model, tokens_used, latency_ms, errors, created_at, started_at, completed_at")
-    .eq("project_id", id)
-    .order("created_at", { ascending: true });
+  const { data: project } = await admin
+    .from("projects").select("id").eq("id", projectId).eq("user_id", user.id).single();
+  if (!project) return NextResponse.json({ data: null, error: "Project not found" }, { status: 404 });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data ?? []);
+  const { searchParams } = new URL(req.url);
+  const runId = searchParams.get("runId");
+
+  let query = admin
+    .from("tasks")
+    .select("id, title, description, assigned_agent, status, priority, provider, model, tokens_used, latency_ms, errors, started_at, completed_at, created_at")
+    .eq("project_id", projectId)
+    .order("priority", { ascending: false });
+
+  if (runId) query = query.eq("run_id", runId);
+
+  const { data: tasks, error } = await query;
+  if (error) return NextResponse.json({ data: null, error: error.message }, { status: 500 });
+  return NextResponse.json({ data: tasks, error: null });
 }

@@ -1,167 +1,248 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuth } from "@/lib/utils/auth";
-import { createSSEStream } from "@/lib/streaming/sse";
-import { runOrchestrator, executeDAG } from "@/lib/agents/orchestrator";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createServerClient } from "@/lib/supabase/server";
-import { checkRateLimit } from "@/lib/utils/rate-limit";
+import { createSSEStream } from "@/lib/streaming/sse";
+import { rateLimit } from "@/lib/rate-limit";
+import { runOrchestrator, executeDAG } from "@/lib/agents/orchestrator";
+import type { AgentContext } from "@/types/agent";
 
-const Schema = z.object({
-  prompt:         z.string().min(10).max(5000),
+const GenerateSchema = z.object({
+  prompt:         z.string().min(10).max(4000),
   routingProfile: z.enum(["free_tier", "balanced", "fast_build", "quality"]).default("balanced"),
-  freeTierFirst:  z.boolean().default(true),
 });
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const user = await requireAuth(req);
-  if (!user) return new Response("Unauthorized", { status: 401 });
+  if (!user) return NextResponse.json({ data: null, error: "Unauthorized" }, { status: 401 });
 
-  // Rate limit: max 10 generations per hour per user
-  const allowed = await checkRateLimit(user.id, "generate", 10, "1h");
-  if (!allowed) return new Response("Rate limit exceeded", { status: 429 });
+  const { id: projectId } = await params;
 
-  const body = await req.json().catch(() => ({}));
-  const parsed = Schema.safeParse(body);
-  if (!parsed.success) return new Response("Invalid input", { status: 400 });
+  const rl = rateLimit(`gen:${user.id}`, { limit: 5, windowMs: 10 * 60 * 1000 });
+  if (!rl.success) {
+    return NextResponse.json(
+      { data: null, error: "Rate limit exceeded — try again shortly" },
+      { status: 429, headers: { "Retry-After": String(Math.ceil((rl.resetAt - Date.now()) / 1000)) } }
+    );
+  }
 
-  const supabase = await createServerClient();
-  const { data: project } = await supabase
+  const body = await req.json().catch(() => null);
+  const parsed = GenerateSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ data: null, error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
+  }
+  const { prompt, routingProfile } = parsed.data;
+
+  const admin = createAdminClient();
+
+  const { data: project, error: projectError } = await admin
     .from("projects")
-    .select()
-    .eq("id", id)
+    .select("id, user_id, status, metadata")
+    .eq("id", projectId)
     .eq("user_id", user.id)
     .single();
-  if (!project) return new Response("Not found", { status: 404 });
+
+  if (projectError || !project) {
+    return NextResponse.json({ data: null, error: "Project not found" }, { status: 404 });
+  }
+
+  const { data: providerConfig } = await admin
+    .from("provider_configs")
+    .select("*")
+    .eq("user_id", user.id)
+    .single();
+
+  const resolvedConfig = {
+    routingProfile: (providerConfig?.routing_profile ?? routingProfile) as
+      "free_tier" | "balanced" | "fast_build" | "quality",
+    freeTierFirst: providerConfig?.free_tier_first ?? true,
+    fastRepair:    providerConfig?.fast_repair      ?? false,
+    qualityMode:   providerConfig?.quality_mode     ?? false,
+  };
 
   return createSSEStream(async (emit) => {
-    const admin = createAdminClient();
-
-    await admin.from("projects").update({ status: "generating" }).eq("id", id);
-
     const { data: run, error: runError } = await admin
       .from("agent_runs")
       .insert({
-        project_id: id,
-        status: "running",
-        trigger: "user",
+        project_id: projectId,
+        status:     "running",
+        trigger:    "user",
         started_at: new Date().toISOString(),
+        metadata:   { prompt, routingProfile: resolvedConfig.routingProfile },
       })
       .select()
       .single();
 
-    if (!run || runError) {
-      await admin.from("projects").update({ status: "error" }).eq("id", id);
-      emit({ type: "run.failed", error: runError?.message ?? "Failed to create agent run" });
-      return;
-    }
+    if (runError || !run) { emit({ type: "error", message: "Failed to create run" }); return; }
 
-    emit({ type: "run.started", runId: run.id });
+    const runId = run.id as string;
 
-    const providerConfig = {
-      routingProfile: parsed.data.routingProfile,
-      freeTierFirst: parsed.data.freeTierFirst,
-      fastRepair: false,
-      qualityMode: false,
-    };
+    await admin.from("projects").update({ status: "generating" }).eq("id", projectId);
+    emit({ type: "run.started", runId, projectId });
 
     try {
+      const baseCtx: Omit<AgentContext, "taskId" | "inputs"> = {
+        projectId, runId, userId: user.id, providerConfig: resolvedConfig,
+      };
+
       emit({ type: "agent.started", agent: "orchestrator" });
 
-      const plan = await runOrchestrator(parsed.data.prompt, {
-        projectId: id,
-        runId: run.id,
-        userId: user.id,
-        taskId: "orchestrator-0",
-        inputs: { userPrompt: parsed.data.prompt },
-        providerConfig,
+      const orchestratorCtx: AgentContext = {
+        ...baseCtx,
+        taskId: runId,
+        inputs: { userPrompt: prompt },
+      };
+
+      const orchestratorResult = await runOrchestrator(prompt, orchestratorCtx);
+      const plan = orchestratorResult.output;
+
+      emit({
+        type: "agent.completed", agent: "orchestrator",
+        provider: orchestratorResult.metadata.provider,
+        model: orchestratorResult.metadata.model,
+        tokens_used: orchestratorResult.metadata.tokens_used,
+        estimated_files: plan.estimated_files,
+        task_count: plan.tasks.length,
       });
 
-      emit({ type: "agent.completed", agent: "orchestrator", taskCount: plan.output.tasks.length });
+      // ── Two-phase task insert ─────────────────────────────────────────────
+      // Phase 1: insert without dependencies to obtain DB UUIDs
+      const taskRows = plan.tasks.map((t) => ({
+        run_id: runId, project_id: projectId,
+        title: t.title, description: t.description,
+        assigned_agent: t.assigned_agent,
+        status: "pending" as const, priority: t.priority,
+        dependencies: [] as string[],
+        input_refs: t.input_refs ?? [], output_refs: t.output_refs ?? [],
+        errors: [], retry_count: 0, max_retries: 3,
+      }));
 
-      // Persist tasks — store AI plan IDs in a metadata field so the DAG
-      // engine can resolve dependencies against DB IDs.
-      if (plan.output.tasks.length > 0) {
-        await admin.from("tasks").insert(
-          plan.output.tasks.map((t) => ({
-            run_id: run.id,
-            project_id: id,
-            title: t.title,
-            description: t.description,
-            assigned_agent: t.assigned_agent,
-            status: "pending",
-            priority: t.priority,
-            // Dependencies are stored as empty until the DAG engine resolves them
-            // against the DB IDs fetched at execution time.
-            dependencies: [],
-            input_refs: t.input_refs,
-            output_refs: t.output_refs,
-            errors: t.errors,
-            retry_count: 0,
-            max_retries: t.max_retries,
-          }))
-        );
+      const { data: insertedTasks, error: insertError } = await admin
+        .from("tasks").insert(taskRows).select("id, title, assigned_agent");
+
+      if (insertError || !insertedTasks) {
+        throw new Error(`Failed to insert tasks: ${insertError?.message}`);
       }
 
-      for (const task of plan.output.tasks) {
-        emit({ type: "task.queued", agent: task.assigned_agent, title: task.title });
+      // Build plan-UUID → DB-UUID map via title matching
+      const titleToDbId = new Map<string, string>(
+        insertedTasks.map((row) => [row.title as string, row.id as string])
+      );
+      const planIdToDbId = new Map<string, string>();
+      for (const planTask of plan.tasks) {
+        const dbId = titleToDbId.get(planTask.title);
+        if (dbId) planIdToDbId.set(planTask.id, dbId);
       }
 
-      await executeDAG(plan.output, {
-        projectId: id,
-        runId: run.id,
-        userId: user.id,
-        providerConfig,
-      });
+      // Phase 2: write translated dependency UUIDs
+      await Promise.all(
+        plan.tasks.map(async (planTask) => {
+          const dbId = planIdToDbId.get(planTask.id);
+          if (!dbId) return;
+          const translatedDeps = (planTask.dependencies ?? [])
+            .map((depPlanId) => planIdToDbId.get(depPlanId))
+            .filter((id): id is string => !!id);
+          if (translatedDeps.length > 0) {
+            await admin.from("tasks").update({ dependencies: translatedDeps }).eq("id", dbId);
+          }
+        })
+      );
 
-      // Fetch final file count for the version snapshot
-      const { count: fileCount } = await admin
-        .from("project_files")
-        .select("id", { count: "exact", head: true })
-        .eq("project_id", id)
-        .eq("is_deleted", false);
+      emit({ type: "tasks.seeded", count: insertedTasks.length });
 
-      await admin
-        .from("agent_runs")
-        .update({ status: "completed", completed_at: new Date().toISOString() })
-        .eq("id", run.id);
-      await admin
-        .from("projects")
-        .update({ status: "ready", updated_at: new Date().toISOString() })
-        .eq("id", id);
+      // ── Poll for task status changes while DAG runs ───────────────────────
+      let lastEmittedStatuses: Record<string, string> = {};
+      const pollInterval = setInterval(async () => {
+        const { data: currentTasks } = await admin
+          .from("tasks")
+          .select("id, title, assigned_agent, status, provider, model, tokens_used, latency_ms")
+          .eq("run_id", runId);
+        if (!currentTasks) return;
+        for (const task of currentTasks) {
+          const prev = lastEmittedStatuses[task.id as string];
+          if (prev !== task.status) {
+            lastEmittedStatuses[task.id as string] = task.status as string;
+            emit({ type: `task.${task.status}`, taskId: task.id, title: task.title,
+              agent: task.assigned_agent, status: task.status,
+              provider: task.provider, model: task.model,
+              tokens_used: task.tokens_used, latency_ms: task.latency_ms });
+          }
+        }
+      }, 1500);
 
-      // Create a version snapshot with full metadata
-      const { data: latestVersion } = await admin
-        .from("project_versions")
-        .select("version_num")
-        .eq("project_id", id)
-        .order("version_num", { ascending: false })
-        .limit(1)
-        .single();
+      try {
+        await executeDAG(plan, baseCtx);
+      } finally {
+        clearInterval(pollInterval);
+      }
 
-      const nextNum = (latestVersion?.version_num ?? 0) + 1;
-      await admin.from("project_versions").insert({
-        project_id: id,
-        version_num: nextNum,
-        label: `v${nextNum} — ${new Date().toLocaleString()}`,
-        created_by: user.id,
-        snapshot: {
-          taskCount: plan.output.tasks.length,
-          fileCount: fileCount ?? 0,
-          techStack: plan.output.tech_stack,
-          projectSummary: plan.output.project_summary,
-          runId: run.id,
-          routingProfile: parsed.data.routingProfile,
-          generatedAt: new Date().toISOString(),
-        },
-      });
+      // ── Final snapshot ────────────────────────────────────────────────────
+      const { data: finalTasks } = await admin
+        .from("tasks").select("id, title, assigned_agent, status, provider, model, tokens_used, latency_ms, errors")
+        .eq("run_id", runId);
 
-      emit({ type: "run.completed", runId: run.id });
+      const failedTasks = (finalTasks ?? []).filter((t) => t.status === "failed");
+      const allCompleted = failedTasks.length === 0;
+
+      // ── Version snapshot ──────────────────────────────────────────────────
+      if (allCompleted) {
+        const { data: files } = await admin
+          .from("project_files").select("id, path, language, agent_id")
+          .eq("project_id", projectId).eq("is_deleted", false);
+
+        const { data: latestVersion } = await admin
+          .from("project_versions").select("version_num")
+          .eq("project_id", projectId).order("version_num", { ascending: false }).limit(1).single();
+
+        const nextVersionNum = ((latestVersion?.version_num as number) ?? 0) + 1;
+
+        const { data: newVersion } = await admin
+          .from("project_versions")
+          .insert({
+            project_id: projectId, version_num: nextVersionNum,
+            label: `v${nextVersionNum} — ${new Date().toLocaleDateString()}`,
+            snapshot: { prompt, file_count: files?.length ?? 0,
+              file_paths: (files ?? []).map((f) => f.path), run_id: runId },
+            created_by: user.id,
+          })
+          .select().single();
+
+        if (newVersion) {
+          await admin.from("project_files")
+            .update({ version_id: newVersion.id })
+            .eq("project_id", projectId).is("version_id", null).eq("is_deleted", false);
+
+          await admin.from("projects")
+            .update({ status: "ready", current_version_id: newVersion.id })
+            .eq("id", projectId);
+
+          emit({ type: "version.created", versionId: newVersion.id,
+            versionNum: nextVersionNum, file_count: files?.length ?? 0 });
+        }
+      } else {
+        await admin.from("projects").update({ status: "error" }).eq("id", projectId);
+      }
+
+      await admin.from("agent_runs").update({
+        status: allCompleted ? "completed" : "failed",
+        completed_at: new Date().toISOString(),
+        error: allCompleted ? null
+          : `${failedTasks.length} task(s) failed: ${failedTasks.map((t) => t.assigned_agent).join(", ")}`,
+      }).eq("id", runId);
+
+      emit({ type: allCompleted ? "run.completed" : "run.failed", runId, tasks: finalTasks,
+        error: allCompleted ? null : `${failedTasks.length} task(s) failed` });
+
     } catch (err) {
-      await admin.from("agent_runs").update({ status: "failed", error: String(err) }).eq("id", run.id);
-      await admin.from("projects").update({ status: "error" }).eq("id", id);
-      emit({ type: "run.failed", error: String(err) });
+      const message = String(err);
+      await admin.from("agent_runs")
+        .update({ status: "failed", error: message, completed_at: new Date().toISOString() })
+        .eq("id", runId);
+      await admin.from("projects").update({ status: "error" }).eq("id", projectId);
+      emit({ type: "run.failed", runId, error: message });
     }
   });
 }

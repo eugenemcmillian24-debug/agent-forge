@@ -77,13 +77,23 @@ import { createAdminClient } from "@/lib/supabase/admin";
 /**
  * Execute the agent DAG.
  *
- * Key fix: the AI-generated task IDs are used for dependency resolution
- * during planning, but after DB insert the tasks get new DB UUIDs.
- * We maintain a mapping from AI-plan-id → DB-id so `completed.has(dep)`
- * works correctly against the DB IDs stored in `task.dependencies`.
+ * Key fixes applied:
  *
- * Context passing: each agent receives outputs from completed dependency agents
- * via ctx.inputs, enabling downstream agents to build on upstream work.
+ * 1. Two-phase ID mapping: AI-generated task IDs are used for dependency
+ *    resolution during planning, but after DB insert the tasks get new DB UUIDs.
+ *    We maintain a mapping from AI-plan-id → DB-id so `completed.has(dep)`
+ *    works correctly against the DB IDs stored in `task.dependencies`.
+ *
+ * 2. QA file injection: before dispatching to the QA agent, we load all
+ *    generated project_files and inject them into ctx.inputs.files so the
+ *    QA agent reviews real code, not an empty list.
+ *
+ * 3. Dynamic repair trigger: after QA completes, if qaReport.repair_needed
+ *    is true we inject a repair task and re-queue it — even if the orchestrator
+ *    did not plan a repair task upfront.
+ *
+ * 4. Context passing: each agent receives outputs from completed dependency
+ *    agents via ctx.inputs, enabling downstream agents to build on upstream work.
  */
 export async function executeDAG(
   plan: ExecutionPlan,
@@ -108,9 +118,9 @@ export async function executeDAG(
   // Accumulate agent outputs to pass as inputs to downstream agents
   const agentOutputs: Record<string, unknown> = { plan };
 
-  // Safety: max iterations = tasks.length * 2 to prevent infinite loops
+  // Safety: max iterations = tasks.length * 3 (extra headroom for injected repair task)
   let iterations = 0;
-  const maxIterations = tasks.length * 2;
+  const maxIterations = tasks.length * 3;
 
   while (completed.size + failed.size < tasks.length && iterations < maxIterations) {
     iterations++;
@@ -134,15 +144,30 @@ export async function executeDAG(
         task.status = "running";
 
         try {
+          // ── FIX 2: inject real project files for QA agent ──────────────
+          let extraInputs: Record<string, unknown> = {};
+          if (task.assigned_agent === "qa") {
+            const { data: projectFiles } = await admin
+              .from("project_files")
+              .select("path, content, language")
+              .eq("project_id", ctx.projectId)
+              .eq("is_deleted", false);
+
+            extraInputs.files = (projectFiles ?? []).map((f) => ({
+              path:    f.path,
+              content: f.content ?? "",
+            }));
+          }
+
           const result = await dispatchToAgent(task as unknown as Task, {
             ...ctx,
             taskId: task.id,
             inputs: {
               ...agentOutputs,
-              // Provide structured context keys for each agent type
-              productBrief: agentOutputs.productBrief,
-              architecture: agentOutputs.architecture,
-              designSystem: agentOutputs.designSystem,
+              productBrief:  agentOutputs.productBrief,
+              architecture:  agentOutputs.architecture,
+              designSystem:  agentOutputs.designSystem,
+              ...extraInputs,
             },
           });
 
@@ -153,17 +178,65 @@ export async function executeDAG(
           await admin
             .from("tasks")
             .update({
-              status: "completed",
+              status:       "completed",
               completed_at: new Date().toISOString(),
-              provider: result.metadata.provider,
-              model: result.metadata.model,
-              tokens_used: result.metadata.tokens_used,
-              latency_ms: result.metadata.latency_ms,
+              provider:     result.metadata.provider,
+              model:        result.metadata.model,
+              tokens_used:  result.metadata.tokens_used,
+              latency_ms:   result.metadata.latency_ms,
             })
             .eq("id", task.id);
 
           task.status = "completed";
           completed.add(task.id);
+
+          // ── FIX 3: dynamic repair trigger ──────────────────────────────
+          // If QA flagged repair_needed, inject a repair task right now
+          // rather than waiting for the orchestrator to have planned one.
+          if (task.assigned_agent === "qa") {
+            const qaReport = result.output as { repair_needed?: boolean; repair_tasks?: unknown[] };
+
+            if (qaReport.repair_needed) {
+              // Check if a repair task already exists for this run
+              const { data: existingRepair } = await admin
+                .from("tasks")
+                .select("id")
+                .eq("run_id", ctx.runId)
+                .eq("assigned_agent", "repair")
+                .single();
+
+              if (!existingRepair) {
+                // Inject a new repair task that depends on this QA task
+                const { data: repairTask } = await admin
+                  .from("tasks")
+                  .insert({
+                    run_id:         ctx.runId,
+                    project_id:     ctx.projectId,
+                    title:          "Repair — fix QA failures",
+                    description:    "Automatically injected after QA found issues",
+                    assigned_agent: "repair",
+                    status:         "pending",
+                    priority:       9,
+                    dependencies:   [task.id], // depends on QA completing
+                    input_refs:     [],
+                    output_refs:    [],
+                    errors:         [],
+                    retry_count:    0,
+                    max_retries:    3,
+                  })
+                  .select()
+                  .single();
+
+                if (repairTask) {
+                  // Store repair tasks in agentOutputs so the repair agent can read them
+                  agentOutputs.repairTasks = qaReport.repair_tasks ?? [];
+                  tasks.push({ ...repairTask, status: "pending" });
+                  console.log(`[dag] Injected repair task ${repairTask.id} after QA flagged issues`);
+                }
+              }
+            }
+          }
+
         } catch (err) {
           task.retry_count = (task.retry_count ?? 0) + 1;
 

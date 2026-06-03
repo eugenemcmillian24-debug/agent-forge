@@ -1,158 +1,158 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { requireAuth } from "@/lib/utils/auth";
-import { createServerClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { encryptSecret } from "@/lib/utils/crypto";
-import { checkRateLimit } from "@/lib/utils/rate-limit";
 import { Octokit } from "@octokit/rest";
+import { decryptSecret } from "@/lib/utils/crypto";
+import { rateLimit } from "@/lib/rate-limit";
 
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+const PushSchema = z.object({
+  repoName:    z.string().min(1).max(100).regex(/^[a-zA-Z0-9_.-]+$/, "Invalid repo name"),
+  description: z.string().max(300).optional(),
+  isPrivate:   z.boolean().default(true),
+  branch:      z.string().default("main"),
+});
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
   const user = await requireAuth(req);
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!user) return NextResponse.json({ data: null, error: "Unauthorized" }, { status: 401 });
 
-  // Rate limit: max 20 pushes per hour per user
-  const allowed = await checkRateLimit(user.id, "github_push", 20, "1h");
-  if (!allowed) return NextResponse.json({ error: "Rate limit exceeded" }, { status: 429 });
+  const { id: projectId } = await params;
 
-  const supabase = await createServerClient();
-  const admin = createAdminClient();
+  const rl = rateLimit(`github:${user.id}`, { limit: 5, windowMs: 60 * 60 * 1000 });
+  if (!rl.success) return NextResponse.json({ data: null, error: "Rate limit exceeded" }, { status: 429 });
 
-  const { data: project } = await supabase
-    .from("projects")
-    .select()
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .single();
-  if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
-  // Only use the user's own connected GitHub token.
-  // Never fall back to server-level tokens — that would push user code
-  // to repos under the AgentForge service account.
-  const { data: conn } = await supabase
-    .from("github_connections")
-    .select()
-    .eq("user_id", user.id)
-    .single();
-
-  const token = conn?.token_enc;
-  if (!token) {
-    return NextResponse.json(
-      { error: "Connect your GitHub account in Settings → Integrations before pushing." },
-      { status: 400 }
-    );
+  const body = await req.json().catch(() => null);
+  const parsed = PushSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ data: null, error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { data: files } = await supabase
-    .from("project_files")
-    .select("path, content")
-    .eq("project_id", id)
-    .eq("is_deleted", false);
+  const admin = createAdminClient();
 
-  if (!files?.length) return NextResponse.json({ error: "No files to push" }, { status: 400 });
+  const { data: project } = await admin
+    .from("projects").select("id, name").eq("id", projectId).eq("user_id", user.id).single();
+  if (!project) return NextResponse.json({ data: null, error: "Project not found" }, { status: 404 });
 
-  const repoName = project.name
-    .toLowerCase()
-    .replace(/[^a-z0-9-]/g, "-")
-    .replace(/-+/g, "-")
-    .slice(0, 50);
+  // Load GitHub connection
+  const { data: ghConn } = await admin
+    .from("github_connections").select("token_enc, login").eq("user_id", user.id).single();
+
+  // Fall back to server-level GitHub token
+  const token = ghConn?.token_enc
+    ? await decryptSecret(ghConn.token_enc as string).catch(() => null)
+    : process.env.GITHUB_TOKEN ?? null;
+
+  if (!token) {
+    return NextResponse.json({ data: null, error: "No GitHub token configured. Add one in Settings → Providers." }, { status: 400 });
+  }
+
+  const octokit = new Octokit({ auth: token });
+
+  // Get authenticated user
+  const { data: ghUser } = await octokit.users.getAuthenticated();
+
+  // Load project files
+  const { data: files } = await admin
+    .from("project_files").select("path, content")
+    .eq("project_id", projectId).eq("is_deleted", false);
+
+  if (!files || files.length === 0) {
+    return NextResponse.json({ data: null, error: "No files to push" }, { status: 400 });
+  }
 
   try {
-    const octokit = new Octokit({ auth: token });
-    const { data: ghUser } = await octokit.users.getAuthenticated();
+    // Create or get repo
+    let repoUrl: string;
+    let sha: string | undefined;
 
-    let repo;
     try {
-      const { data } = await octokit.repos.get({ owner: ghUser.login, repo: repoName });
-      repo = data;
-    } catch {
-      const { data } = await octokit.repos.createForAuthenticatedUser({
-        name: repoName,
-        private: false,
-        auto_init: true,
-        description: `Generated by AgentForge — ${project.description ?? project.name}`,
+      const { data: existingRepo } = await octokit.repos.get({
+        owner: ghUser.login, repo: parsed.data.repoName,
       });
-      repo = data;
+      repoUrl = existingRepo.html_url;
+    } catch {
+      const { data: newRepo } = await octokit.repos.createForAuthenticatedUser({
+        name:        parsed.data.repoName,
+        description: parsed.data.description ?? (project.name as string),
+        private:     parsed.data.isPrivate,
+        auto_init:   false,
+      });
+      repoUrl = newRepo.html_url;
     }
 
-    const { data: ref } = await octokit.git.getRef({
-      owner: ghUser.login,
-      repo: repoName,
-      ref: "heads/main",
-    });
-    const baseSha = ref.object.sha;
-
+    // Build tree
     const treeItems = await Promise.all(
-      files
-        .filter((f) => f.content && f.content.length > 0)
-        .map(async (f) => {
-          const { data: blob } = await octokit.git.createBlob({
-            owner: ghUser.login,
-            repo: repoName,
-            content: btoa(unescape(encodeURIComponent(f.content!))),
-            encoding: "base64",
-          });
-          return { path: f.path, mode: "100644" as const, type: "blob" as const, sha: blob.sha };
-        })
+      files.map(async (file) => {
+        const cleanPath = (file.path as string).startsWith("/") ? (file.path as string).slice(1) : (file.path as string);
+        const { data: blob } = await octokit.git.createBlob({
+          owner: ghUser.login, repo: parsed.data.repoName,
+          content: Buffer.from((file.content ?? "") as string).toString("base64"),
+          encoding: "base64",
+        });
+        return { path: cleanPath, mode: "100644" as const, type: "blob" as const, sha: blob.sha };
+      })
     );
 
-    const envExample =
-      "NEXT_PUBLIC_SUPABASE_URL=\nNEXT_PUBLIC_SUPABASE_ANON_KEY=\nSUPABASE_SERVICE_ROLE_KEY=\nGITHUB_MODELS_TOKEN=\nGROQ_API_KEY=\nMISTRAL_API_KEY=\nOPENROUTER_API_KEY=\nHUGGINGFACE_TOKEN=\nCLOUDFLARE_API_TOKEN=\nCLOUDFLARE_ACCOUNT_ID=\nENCRYPTION_KEY=";
-    const { data: envBlob } = await octokit.git.createBlob({
-      owner: ghUser.login,
-      repo: repoName,
-      content: btoa(envExample),
-      encoding: "base64",
-    });
-    treeItems.push({ path: ".env.example", mode: "100644", type: "blob", sha: envBlob.sha });
+    // Get base tree SHA (if repo exists and has commits)
+    let baseTreeSha: string | undefined;
+    try {
+      const { data: ref } = await octokit.git.getRef({
+        owner: ghUser.login, repo: parsed.data.repoName, ref: `heads/${parsed.data.branch}`,
+      });
+      const { data: commit } = await octokit.git.getCommit({
+        owner: ghUser.login, repo: parsed.data.repoName, commit_sha: ref.object.sha,
+      });
+      baseTreeSha = commit.tree.sha;
+      sha = ref.object.sha;
+    } catch { /* new repo — no base tree */ }
 
     const { data: tree } = await octokit.git.createTree({
-      owner: ghUser.login,
-      repo: repoName,
-      base_tree: baseSha,
+      owner: ghUser.login, repo: parsed.data.repoName,
       tree: treeItems,
+      ...(baseTreeSha ? { base_tree: baseTreeSha } : {}),
     });
-    const { data: commit } = await octokit.git.createCommit({
-      owner: ghUser.login,
-      repo: repoName,
-      message: `feat: AgentForge generated project — ${project.name}\n\nGenerated ${files.length} files using orchestrated AI agents.\nTemplate: ${project.template ?? "custom"}`,
+
+    const { data: newCommit } = await octokit.git.createCommit({
+      owner: ghUser.login, repo: parsed.data.repoName,
+      message: `feat: generated by AgentForge — ${new Date().toISOString()}`,
       tree: tree.sha,
-      parents: [baseSha],
-    });
-    await octokit.git.updateRef({
-      owner: ghUser.login,
-      repo: repoName,
-      ref: "heads/main",
-      sha: commit.sha,
+      ...(sha ? { parents: [sha] } : {}),
     });
 
-    // Re-encrypt and store token to keep it fresh
-    const encryptedToken = await encryptSecret(token);
-    await admin.from("github_connections").upsert(
-      {
-        user_id: user.id,
-        login: ghUser.login,
-        token_enc: encryptedToken,
-        scope: ["repo"],
-        repo_url: repo.html_url,
-        commit_sha: commit.sha,
-      },
-      { onConflict: "user_id" }
-    );
+    // Create or update branch ref
+    try {
+      await octokit.git.updateRef({
+        owner: ghUser.login, repo: parsed.data.repoName,
+        ref: `heads/${parsed.data.branch}`, sha: newCommit.sha, force: true,
+      });
+    } catch {
+      await octokit.git.createRef({
+        owner: ghUser.login, repo: parsed.data.repoName,
+        ref: `refs/heads/${parsed.data.branch}`, sha: newCommit.sha,
+      });
+    }
 
-    await admin.from("audit_logs").insert({
-      user_id: user.id,
-      project_id: id,
-      actor: user.id,
-      action: "github.push",
-      resource: "repo",
-      resource_id: repo.html_url,
-      metadata: { repoUrl: repo.html_url, commitSha: commit.sha, fileCount: files.length },
+    // Persist connection info
+    await admin.from("github_connections").upsert({
+      user_id:    user.id,
+      login:      ghUser.login,
+      token_enc:  ghConn?.token_enc ?? "",
+      repo_url:   repoUrl,
+      commit_sha: newCommit.sha,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "user_id" }).catch(() => {});
+
+    return NextResponse.json({
+      data: { repoUrl, commitSha: newCommit.sha, fileCount: files.length, branch: parsed.data.branch },
+      error: null,
     });
 
-    return NextResponse.json({ repoUrl: repo.html_url, commitSha: commit.sha, fileCount: files.length });
   } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ data: null, error: `GitHub push failed: ${message}` }, { status: 500 });
   }
 }
