@@ -137,14 +137,16 @@ export async function POST(
     }
 
     // Persist connection info
-    await admin.from("github_connections").upsert({
-      user_id:    user.id,
-      login:      ghUser.login,
-      token_enc:  ghConn?.token_enc ?? "",
-      repo_url:   repoUrl,
-      commit_sha: newCommit.sha,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "user_id" }).catch(() => {});
+    try {
+      await admin.from("github_connections").upsert({
+        user_id:    user.id,
+        login:      ghUser.login,
+        token_enc:  ghConn?.token_enc ?? "",
+        repo_url:   repoUrl,
+        commit_sha: newCommit.sha,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id" });
+    } catch { /* non-blocking */ }
 
     return NextResponse.json({
       data: { repoUrl, commitSha: newCommit.sha, fileCount: files.length, branch: parsed.data.branch },

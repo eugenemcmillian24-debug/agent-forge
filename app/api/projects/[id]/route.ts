@@ -7,7 +7,7 @@ const UpdateSchema = z.object({
   name:        z.string().min(1).max(100).optional(),
   description: z.string().max(500).optional(),
   status:      z.enum(["draft","generating","ready","error","archived"]).optional(),
-  metadata:    z.record(z.unknown()).optional(),
+  metadata:    z.record(z.string(), z.unknown()).optional(),
 });
 
 async function getAuthedProject(req: NextRequest, projectId: string) {

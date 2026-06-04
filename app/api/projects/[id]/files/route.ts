@@ -79,22 +79,50 @@ export async function PUT(
   const admin = createAdminClient();
   const cleanPath = parsed.data.path.startsWith("/") ? parsed.data.path.slice(1) : parsed.data.path;
 
-  const { data: file, error: upsertError } = await admin
+  // Check if file exists (unique on project_id + path, ignoring version_id)
+  const { data: existing } = await admin
     .from("project_files")
-    .upsert({
-      project_id: projectId,
-      path:       cleanPath,
-      content:    parsed.data.content,
-      language:   parsed.data.language ?? inferLanguage(cleanPath),
-      agent_id:   "user",
-      provenance: { agent: "user", edited_by: user!.id, edited_at: new Date().toISOString() },
-      is_deleted: false,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "project_id,path", ignoreDuplicates: false })
-    .select()
+    .select("id")
+    .eq("project_id", projectId)
+    .eq("path", cleanPath)
+    .eq("is_deleted", false)
     .single();
 
-  if (upsertError) return NextResponse.json({ data: null, error: upsertError.message }, { status: 500 });
+  let file, fileError;
+  if (existing) {
+    const { data, error } = await admin
+      .from("project_files")
+      .update({
+        content:    parsed.data.content,
+        language:   parsed.data.language ?? inferLanguage(cleanPath),
+        agent_id:   "user",
+        provenance: { agent: "user", edited_by: user!.id, edited_at: new Date().toISOString() },
+        is_deleted: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existing.id)
+      .select()
+      .single();
+    file = data; fileError = error;
+  } else {
+    const { data, error } = await admin
+      .from("project_files")
+      .insert({
+        project_id: projectId,
+        path:       cleanPath,
+        content:    parsed.data.content,
+        language:   parsed.data.language ?? inferLanguage(cleanPath),
+        agent_id:   "user",
+        provenance: { agent: "user", edited_by: user!.id, edited_at: new Date().toISOString() },
+        is_deleted: false,
+        updated_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    file = data; fileError = error;
+  }
+
+  if (fileError) return NextResponse.json({ data: null, error: fileError.message }, { status: 500 });
   return NextResponse.json({ data: file, error: null });
 }
 
