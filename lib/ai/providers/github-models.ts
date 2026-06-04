@@ -10,7 +10,7 @@ function getToken(): string {
   return token;
 }
 
-async function callCompletions(model: string, messages: Array<{ role: string; content: string }>, opts: { temperature?: number; maxTokens?: number; jsonMode?: boolean }, timeout = 30_000) {
+async function callCompletions(model: string, messages: Array<{ role: string; content: string }>, opts: { temperature?: number; maxTokens?: number; jsonMode?: boolean }, timeout = 60_000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   try {
@@ -41,7 +41,36 @@ export const GitHubModelsProvider: AIProvider = {
   async generateStructured<T>(opts: GenerateStructuredOptions<T>): Promise<StructuredResponse<T>> {
     const start = Date.now();
     const result = await callCompletions(opts.model, opts.messages, { temperature: opts.temperature, maxTokens: opts.maxTokens, jsonMode: true }, opts.timeout);
-    const parsed = opts.schema.parse(JSON.parse(result.content));
+    // Normalize model output before Zod validation.
+    // The model sometimes returns non-UUID IDs (e.g. "1a2b3c4d-pm").
+    // We replace invalid IDs with real UUIDs and remap dependency references
+    // so Zod validation succeeds regardless of model UUID quality.
+    const rawObj = JSON.parse(result.content);
+    if (rawObj && Array.isArray(rawObj.tasks)) {
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      const remap = new Map<string, string>();
+      for (const task of rawObj.tasks) {
+        if (task && typeof task.id === "string" && !UUID_RE.test(task.id)) {
+          remap.set(task.id, crypto.randomUUID());
+        }
+      }
+      if (remap.size > 0) {
+        rawObj.tasks = rawObj.tasks.map((task: Record<string, unknown>) => ({
+          ...task,
+          id: remap.get(task.id as string) ?? task.id,
+          dependencies: Array.isArray(task.dependencies)
+            ? (task.dependencies as string[]).map(dep => remap.get(dep) ?? dep)
+            : [],
+        }));
+        if (Array.isArray(rawObj.dag_edges)) {
+          rawObj.dag_edges = rawObj.dag_edges.map((e: Record<string, string>) => ({
+            from: remap.get(e.from) ?? e.from,
+            to:   remap.get(e.to)   ?? e.to,
+          }));
+        }
+      }
+    }
+    const parsed = opts.schema.parse(rawObj);
     return { content: result.content, data: parsed, provider: "githubModels", model: opts.model, usage: result.usage, latency_ms: Date.now() - start };
   },
   async streamText(opts: StreamTextOptions): Promise<AIResponse> {

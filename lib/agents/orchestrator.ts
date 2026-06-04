@@ -48,30 +48,24 @@ Example output structure (follow this exactly):
     {
       "id": "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f789",
       "title": "Define Product Requirements",
-      "description": "Create a detailed product brief including user stories, features, and acceptance criteria.",
+      "description": "Create product brief with user stories and acceptance criteria.",
       "assigned_agent": "product_manager",
       "status": "pending",
       "priority": 10,
       "dependencies": [],
-      "input_refs": [],
-      "output_refs": [],
-      "errors": [],
-      "retry_count": 0,
-      "max_retries": 3
+      "input_refs": [], "output_refs": [], "errors": [],
+      "retry_count": 0, "max_retries": 3
     },
     {
       "id": "b2c3d4e5-f6a7-4890-b123-c4d5e6f7a890",
       "title": "Design System Architecture",
-      "description": "Define the technical architecture, file structure, API design, and technology choices.",
+      "description": "Define technical architecture, file structure, and API design.",
       "assigned_agent": "architect",
       "status": "pending",
       "priority": 10,
       "dependencies": [],
-      "input_refs": [],
-      "output_refs": [],
-      "errors": [],
-      "retry_count": 0,
-      "max_retries": 3
+      "input_refs": [], "output_refs": [], "errors": [],
+      "retry_count": 0, "max_retries": 3
     }
   ],
   "dag_edges": [
