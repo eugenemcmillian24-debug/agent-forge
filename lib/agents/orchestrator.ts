@@ -33,9 +33,87 @@ Rules:
 - export_agent runs after product_manager and architect.
 - qa runs after all code generation completes.
 - repair runs only if qa finds errors.
-- Every task must have a UUID id field.
-- Return ONLY valid JSON matching the ExecutionPlan schema.
+- Every task must have a UUID id field (format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx).
+- Return ONLY valid JSON matching the ExecutionPlan schema exactly.
+
+CRITICAL — use these EXACT field names in your JSON output:
+- Top level: project_summary, tech_stack, tasks, dag_edges, estimated_files, notes
+- Each task: id (valid UUID v4), title, description, assigned_agent, status ("pending"), priority, dependencies (array of UUID strings), input_refs ([]), output_refs ([]), errors ([]), retry_count (0), max_retries (3)
+
+Example output structure (follow this exactly):
+{
+  "project_summary": "A full-stack todo app with user authentication and REST API",
+  "tech_stack": ["Next.js", "TypeScript", "Supabase", "Tailwind CSS"],
+  "tasks": [
+    {
+      "id": "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f789",
+      "title": "Define Product Requirements",
+      "description": "Create a detailed product brief including user stories, features, and acceptance criteria.",
+      "assigned_agent": "product_manager",
+      "status": "pending",
+      "priority": 10,
+      "dependencies": [],
+      "input_refs": [],
+      "output_refs": [],
+      "errors": [],
+      "retry_count": 0,
+      "max_retries": 3
+    },
+    {
+      "id": "b2c3d4e5-f6a7-4890-b123-c4d5e6f7a890",
+      "title": "Design System Architecture",
+      "description": "Define the technical architecture, file structure, API design, and technology choices.",
+      "assigned_agent": "architect",
+      "status": "pending",
+      "priority": 10,
+      "dependencies": [],
+      "input_refs": [],
+      "output_refs": [],
+      "errors": [],
+      "retry_count": 0,
+      "max_retries": 3
+    }
+  ],
+  "dag_edges": [
+    { "from": "a1b2c3d4-e5f6-4789-a012-b3c4d5e6f789", "to": "b2c3d4e5-f6a7-4890-b123-c4d5e6f7a890" }
+  ],
+  "estimated_files": 15,
+  "notes": "Standard todo app — no AI integration required"
+}
 `.trim();
+
+
+// ── UUID normalizer ───────────────────────────────────────────────────────────
+// The model sometimes returns non-UUID IDs (e.g. "1a2b3c4d-pm" or sequential
+// short strings). This normalizer replaces any invalid UUID with a real UUID v4
+// and remaps all dependency references and dag_edges accordingly.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function normalizeExecutionPlan(plan: ExecutionPlan): ExecutionPlan {
+  // Build remap: original id → valid uuid
+  const remap = new Map<string, string>();
+  for (const task of plan.tasks) {
+    if (!UUID_RE.test(task.id)) {
+      remap.set(task.id, crypto.randomUUID());
+    }
+  }
+  if (remap.size === 0) return plan; // all IDs already valid
+
+  // Remap task ids and their dependency references
+  const tasks = plan.tasks.map(task => ({
+    ...task,
+    id:           remap.get(task.id) ?? task.id,
+    dependencies: task.dependencies.map(dep => remap.get(dep) ?? dep),
+  }));
+
+  // Remap dag_edges
+  const dag_edges = plan.dag_edges.map(edge => ({
+    from: remap.get(edge.from) ?? edge.from,
+    to:   remap.get(edge.to)   ?? edge.to,
+  }));
+
+  return { ...plan, tasks, dag_edges };
+}
 
 export async function runOrchestrator(
   userPrompt: string,
@@ -49,9 +127,10 @@ export async function runOrchestrator(
     schema: ExecutionPlanSchema,
     ctx,
   });
+  const normalizedPlan = normalizeExecutionPlan(result.data);
   return {
     success: true,
-    output: result.data,
+    output: normalizedPlan,
     errors: [],
     metadata: {
       provider: result.provider,

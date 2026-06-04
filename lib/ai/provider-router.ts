@@ -80,7 +80,26 @@ export async function generateStructured<T>(opts: RouterOptions & { schema: z.Zo
       const result = await p.generateStructured({ messages, model, schema: opts.schema, temperature: opts.temperature, maxTokens: opts.maxTokens });
       await logCall({ ...opts, provider, model, result, error: null });
       return { ...result, provider, model };
-    } catch (err) { lastError = err as Error; await logCall({ ...opts, provider, model, result: null, error: lastError }); }
+    } catch (err) {
+      // BUG-002 FIX: ZodError means the model returned a structurally wrong response.
+      // Retrying other providers won't help — they all use the same prompt and schema.
+      // Surface the schema error immediately with a clear message instead of exhausting
+      // the fallback chain and masking the root cause behind "OPENROUTER_API_KEY is not set".
+      if (err instanceof z.ZodError) {
+        const issues = (err as z.ZodError).issues
+          .slice(0, 5)
+          .map(i => `  • ${i.path.join(".")}: ${i.message}`)
+          .join("\n");
+        throw new Error(
+          `Schema validation failed for ${opts.taskType} (provider: ${provider}, model: ${model}).\n` +
+          `The model returned a response that does not match the expected schema.\n` +
+          `First issues:\n${issues}\n` +
+          `Fix: update the system prompt to produce output matching the Zod schema exactly.`
+        );
+      }
+      lastError = err as Error;
+      await logCall({ ...opts, provider, model, result: null, error: lastError });
+    }
   }
   throw new Error(`All providers failed for structured (${opts.taskType}). Last: ${lastError?.message}`);
 }
